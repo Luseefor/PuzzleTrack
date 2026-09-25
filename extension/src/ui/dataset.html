@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PuzzleTrack — Dataset</title>
+  <link rel="stylesheet" href="popup.css" />
+  <style>
+    body { max-width: none; min-width: 0; }
+    #app { max-width: 1200px; margin: 0 auto; }
+    .controls { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; align-items: end; }
+    .controls label { display: grid; gap: 4px; font-size: 0.78rem; font-weight: 600; color: var(--muted); }
+    .controls select, .controls input { padding: 7px 9px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); color: var(--text); font-size: 0.85rem; font-weight: 400; }
+    .controls select:focus-visible, .controls input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.8rem; background: var(--card); }
+    th, td { padding: 7px 9px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+    thead th { position: sticky; top: 0; background: var(--card-2); z-index: 1; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+    thead tr.group th { background: var(--bg); text-align: center; }
+    tbody tr:nth-child(even) { background: light-dark(rgba(16,24,40,0.025), rgba(255,255,255,0.03)); }
+    tbody tr:hover { background: var(--accent-soft); }
+    th button { background: none; border: none; color: inherit; font: inherit; font-weight: 700; cursor: pointer; padding: 0; }
+    .wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; margin-bottom: 20px; background: var(--card); box-shadow: var(--shadow); max-height: 480px; overflow-y: auto; }
+    .section { border-top: 1px solid var(--border); padding-top: 16px; margin-top: 20px; }
+    .section h2 { font-size: 1rem; margin: 0 0 6px; letter-spacing: -0.01em; }
+    .section h3 { font-size: 0.88rem; margin: 14px 0 6px; }
+    .check { color: var(--ok); font-weight: 700; } .dash { color: var(--muted); }
+    .pill { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 0.74rem; font-weight: 600; border: 1px solid var(--border); background: var(--card-2); }
+    .pill-exact { background: light-dark(#e6f4ea, #12351f); color: light-dark(#1a7f37, #7bd88a); border-color: transparent; }
+    .pill-high { background: light-dark(#fef7e0, #3d2f08); color: light-dark(#8a6d00, #f2c94c); border-color: transparent; }
+    .pill-medium, .pill-low { background: var(--danger-soft); color: var(--danger); border-color: transparent; }
+    .pill-low { font-weight: 800; }
+    .candidate { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin: 8px 0; background: var(--card); box-shadow: var(--shadow); }
+    .candidate .row .btn { width: auto; flex: 1; }
+    #import-log, #match-log { font-size: 0.84rem; }
+    #import-log p, #match-log p { margin: 4px 0; }
+    .conflict { border: 1px solid var(--danger); border-radius: 10px; padding: 10px 12px; margin: 8px 0; background: var(--danger-soft); }
+    #validation-summary p { font-size: 0.86rem; }
+    #validation-errors h3 { color: var(--danger); font-size: 0.88rem; }
+    #validation-warnings h3 { color: light-dark(#8a6d00, #f2c94c); font-size: 0.88rem; }
+    #validation-errors ul, #validation-warnings ul { font-size: 0.82rem; margin: 4px 0 12px; padding-left: 20px; }
+    #review-body td:last-child { white-space: normal; }
+    #review-body .btn { margin: 2px 4px 2px 0; }
+  </style>
+</head>
+<body>
+  <main id="app">
+    <header class="app-header">
+      <h1>PuzzleTrack — Local Dataset</h1>
+      <p class="subtitle">Append-only research records. Completed attempts cannot be edited.</p>
+    </header>
+
+    <div class="controls">
+      <label>Participant
+        <select id="filter-participant"><option value="">All</option></select>
+      </label>
+      <label>Session
+        <select id="filter-session"><option value="">All</option></select>
+      </label>
+      <label>Result
+        <select id="filter-result">
+          <option value="">All</option>
+          <option value="completed">Completed</option>
+          <option value="timeout">Timeout</option>
+          <option value="aborted">Aborted</option>
+        </select>
+      </label>
+      <label>Matching
+        <select id="filter-matched">
+          <option value="">All</option>
+          <option value="matched">Matched</option>
+          <option value="unmatched">Unmatched</option>
+        </select>
+      </label>
+      <label>Integrity
+        <select id="filter-integrity">
+          <option value="">All</option>
+          <option value="flagged">Interrupted</option>
+          <option value="clean">No interruption</option>
+        </select>
+      </label>
+      <label>Sort
+        <select id="sort-by">
+          <option value="started">Date / Started</option>
+          <option value="attempt">Attempt number</option>
+        </select>
+      </label>
+      <label style="justify-content:end">Actions
+        <span style="display:flex;gap:8px;flex-wrap:wrap">
+          <button id="btn-validate" type="button" class="btn btn-small">Validate Dataset</button>
+          <button id="btn-export-all" type="button" class="btn btn-small">Export Full CSV</button>
+          <button id="btn-export-json" type="button" class="btn btn-small">Export JSON</button>
+          <button id="btn-delete-session" type="button" class="btn btn-small">Delete session…</button>
+        </span>
+      </label>
+    </div>
+    <section class="section" id="validation" hidden>
+      <h2>Dataset Validation</h2>
+      <p class="meta">Read-only. Validation never modifies or repairs records.</p>
+      <div id="validation-summary"></div>
+      <div id="validation-errors"></div>
+      <div id="validation-warnings"></div>
+    </section>
+    <p id="empty" class="meta" hidden>No attempts recorded yet.</p>
+    <div class="wrap">
+      <table id="table" aria-label="PuzzleTrack attempts">
+        <thead>
+          <tr class="group"><th colspan="8">Experiment</th><th colspan="7">Chess (manual import)</th><th colspan="6">Derived</th></tr>
+          <tr id="head-row"></tr>
+        </thead>
+        <tbody id="body-rows"></tbody>
+      </table>
+    </div>
+
+    <section class="section" id="import">
+      <h2>ChessTempo History Import</h2>
+      <p class="meta">Local only — select a ChessTempo history CSV you downloaded. Nothing is uploaded; the file is never modified.</p>
+      <div class="controls">
+        <label>History file (CSV)
+          <input id="import-file" type="file" accept=".csv,.txt,text/csv,text/plain" />
+        </label>
+      </div>
+      <div id="import-preview" hidden>
+        <h3 id="preview-title">Import preview</h3>
+        <div id="import-log"></div>
+        <div class="wrap"><table aria-label="Import preview"><thead><tr id="preview-head"></tr></thead><tbody id="preview-body"></tbody></table></div>
+        <div class="row">
+          <button id="btn-import-cancel" type="button" class="btn btn-ghost">Cancel</button>
+          <button id="btn-import-continue" type="button" class="btn btn-primary">Continue to Matching</button>
+        </div>
+      </div>
+      <div id="import-results" hidden>
+        <h3>Matching results</h3>
+        <div id="match-log"></div>
+        <div id="match-review"></div>
+        <div id="conflict-list"></div>
+      </div>
+      <h3>Previous imports</h3>
+      <div class="wrap"><table aria-label="Import provenance"><thead><tr>
+        <th>File</th><th>Imported at</th><th>Rows (V/P/I)</th><th>Matched</th><th>Fingerprint</th>
+      </tr></thead><tbody id="imports-body"></tbody></table></div>
+    </section>
+
+    <section class="section" id="review">
+      <h2>Pilot Review</h2>
+      <p class="meta">Ground-truth checklist. Review marks are stored separately — they never modify raw observations.</p>
+      <div class="wrap"><table aria-label="Pilot review"><thead><tr>
+        <th>Attempt</th><th>Problem</th><th>PT elapsed</th><th>CT time</th><th>Rating</th><th>Player</th><th>Rel. diff</th><th>CT result</th><th>Exp. result</th><th>Losses</th><th>Away</th><th>Match</th><th>Status</th><th>Review</th>
+      </tr></thead><tbody id="review-body"></tbody></table></div>
+    </section>
+
+    <section class="section">
+      <h2>Backup / Restore</h2>
+      <p class="meta">JSON backup contains participants, sessions, attempts, events, imports, rows, and match metadata.</p>
+      <div class="controls">
+        <label>Restore from backup (replaces current data)
+          <input id="restore-file" type="file" accept=".json,application/json" />
+        </label>
+      </div>
+    </section>
+
+    <details class="privacy">
+      <summary>Integrity Monitoring</summary>
+      <p>During an active puzzle attempt, PuzzleTrack records whether the study tab/window loses focus and how
+      long the interruption lasts. It does not record the contents, URLs, or activity of other websites or
+      applications.</p>
+    </details>
+  </main>
+  <script type="module" src="dataset.js"></script>
+</body>
+</html>

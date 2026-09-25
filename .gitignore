@@ -1,0 +1,9 @@
+node_modules/
+extension/dist/
+*.log
+.DS_Store
+# Local ChessTempo fixtures may contain private participant data — never commit.
+fixtures/local/*.csv
+fixtures/local/*.txt
+fixtures/local/*.json
+!fixtures/local/README.md

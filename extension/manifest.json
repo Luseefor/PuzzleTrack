@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "PuzzleTrack",
+  "version": "0.2.0",
+  "description": "Local-first research data collector for chess endgame timing studies. No network, no tracking.",
+  "minimum_chrome_version": "114",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "PuzzleTrack"
+  },
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "permissions": ["storage", "alarms"],
+  "host_permissions": [],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}

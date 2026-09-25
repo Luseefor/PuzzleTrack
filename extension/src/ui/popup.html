@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PuzzleTrack</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <main id="app" aria-live="polite">
+    <header class="app-header">
+      <span class="brand"><span class="brand-mark" aria-hidden="true"></span></span>
+      <div class="brand-text">
+        <h1>PuzzleTrack <span class="version">v0.2</span></h1>
+        <p class="subtitle">Research timer &amp; session tracker</p>
+      </div>
+      <span class="status-dot is-idle" id="status-dot" title="Status"></span>
+    </header>
+
+    <div id="recovery-banner" class="banner banner-warn" hidden>
+      <strong>Interrupted attempt detected.</strong>
+      <span>The browser may have closed or restarted during an active attempt. No result was fabricated.
+      You may resume if time remains, or mark it aborted.</span>
+      <button id="btn-mark-aborted" type="button" class="btn btn-small">Mark aborted</button>
+    </div>
+
+    <div id="timeout-banner" class="banner banner-timeout" hidden role="alert">
+      <strong>TIME LIMIT REACHED</strong>
+      <span>Attempt recorded as timeout.</span>
+    </div>
+
+    <!-- Setup -->
+    <section id="view-setup" class="view" hidden>
+      <h2>Session setup</h2>
+      <label class="field">
+        <span>Participant ID</span>
+        <input id="input-participant" type="text" autocomplete="off" placeholder="e.g. P01" maxlength="32" />
+      </label>
+      <label class="field">
+        <span>Number of puzzles</span>
+        <input id="input-count" type="number" min="1" max="100" value="10" />
+      </label>
+      <fieldset class="field segment-group">
+        <legend>Maximum time per puzzle</legend>
+        <label><input type="radio" name="limit" value="900" checked /><span>15 min</span></label>
+        <label><input type="radio" name="limit" value="1800" /><span>30 min</span></label>
+        <label><input type="radio" name="limit" value="2700" /><span>45 min</span></label>
+        <label><input type="radio" name="limit" value="3600" /><span>60 min</span></label>
+      </fieldset>
+      <p id="setup-error" class="error" role="alert" hidden></p>
+      <button id="btn-start-session" type="button" class="btn btn-primary">Start Session</button>
+      <div class="row">
+        <button id="btn-sidepanel-setup" type="button" class="btn btn-ghost">Open Side Panel</button>
+        <button id="btn-open-tab-setup" type="button" class="btn btn-ghost">Open as tab</button>
+      </div>
+      <div class="row">
+        <button id="btn-dataset-setup" type="button" class="btn btn-ghost">View Dataset</button>
+      </div>
+      <details class="privacy">
+        <summary>Integrity Monitoring</summary>
+        <p>During an active puzzle attempt, PuzzleTrack records whether the study tab/window loses focus and how
+        long the interruption lasts. It does not record the contents, URLs, or activity of other websites or
+        applications.</p>
+      </details>
+    </section>
+
+    <!-- Ready to start next attempt -->
+    <section id="view-ready" class="view" hidden>
+      <h2 id="ready-title">Puzzle 1 of 10</h2>
+      <p class="meta" id="ready-meta">15:00 per puzzle · Participant P01</p>
+      <p class="meta" id="ready-study">Study tab: not designated</p>
+      <div class="row">
+        <button id="btn-designate-tab" type="button" class="btn btn-ghost">Designate current tab as Study Tab</button>
+      </div>
+      <label class="field">
+        <span>Problem ID (optional — improves ChessTempo matching)</span>
+        <input id="input-problem-id" type="text" autocomplete="off" placeholder="e.g. 81496" maxlength="64" />
+      </label>
+      <button id="btn-start-attempt" type="button" class="btn btn-primary">Start Attempt</button>
+      <div class="row">
+        <button id="btn-sidepanel-ready" type="button" class="btn btn-ghost">Side Panel</button>
+        <button id="btn-abandon" type="button" class="btn btn-ghost">Abandon session</button>
+      </div>
+      <div class="row">
+        <button id="btn-dataset-ready" type="button" class="btn btn-ghost">View Dataset</button>
+      </div>
+    </section>
+
+    <!-- Active attempt -->
+    <section id="view-active" class="view" hidden>
+      <h2 id="active-title">Puzzle 1 of 10</h2>
+      <div id="countdown" class="countdown" aria-label="Time remaining">15:00</div>
+      <div class="progress" aria-hidden="true"><div id="countdown-bar"></div></div>
+      <dl class="stats">
+        <div><dt>Elapsed</dt><dd id="stat-elapsed">00:00</dd></div>
+        <div><dt>Time limit</dt><dd id="stat-limit">15:00</dd></div>
+        <div><dt>Focus interruptions</dt><dd id="stat-focus">0</dd></div>
+        <div><dt>Problem ID</dt><dd id="stat-problem">–</dd></div>
+      </dl>
+      <div class="row">
+        <button id="btn-complete" type="button" class="btn btn-primary">Complete Attempt</button>
+        <button id="btn-abort" type="button" class="btn btn-danger-ghost">Abort Attempt</button>
+      </div>
+      <p class="hint">Keep this window visible. Switching tabs or apps records an interruption (not cheating).</p>
+    </section>
+
+    <!-- Attempt summary -->
+    <section id="view-summary" class="view" hidden>
+      <h2 id="summary-title">Puzzle 1 complete</h2>
+      <dl class="stats">
+        <div><dt>Result</dt><dd id="sum-result">Completed</dd></div>
+        <div><dt>Elapsed</dt><dd id="sum-elapsed">00:00</dd></div>
+        <div><dt>Focus interruptions</dt><dd id="sum-focus">0</dd></div>
+        <div><dt>Time away</dt><dd id="sum-away">00:00</dd></div>
+        <div><dt>ChessTempo match</dt><dd id="sum-match">Unmatched</dd></div>
+      </dl>
+      <label class="field">
+        <span>Problem ID (optional — set now to aid matching)</span>
+        <span style="display:flex;gap:8px">
+          <input id="input-problem-id-after" type="text" autocomplete="off" placeholder="e.g. 81496" maxlength="64" style="flex:1" />
+          <button id="btn-save-problem-id" type="button" class="btn btn-small">Save</button>
+        </span>
+      </label>
+      <button id="btn-next" type="button" class="btn btn-primary">Next Puzzle</button>
+    </section>
+
+    <!-- Session complete -->
+    <section id="view-done" class="view" hidden>
+      <h2>SESSION COMPLETE</h2>
+      <h3 class="group-title">Experimental</h3>
+      <dl class="stats">
+        <div><dt>Participant</dt><dd id="done-participant">–</dd></div>
+        <div><dt>Attempts</dt><dd id="done-attempts">–</dd></div>
+        <div><dt>Completed</dt><dd id="done-completed">–</dd></div>
+        <div><dt>Timed out</dt><dd id="done-timeout">–</dd></div>
+        <div><dt>Aborted</dt><dd id="done-aborted">–</dd></div>
+        <div><dt>Median elapsed</dt><dd id="done-median">–</dd></div>
+      </dl>
+      <h3 class="group-title">Chess (matched only)</h3>
+      <dl class="stats">
+        <div><dt>Correct</dt><dd id="done-correct">–</dd></div>
+        <div><dt>Median problem rating</dt><dd id="done-med-rating">–</dd></div>
+        <div><dt>Median relative difficulty</dt><dd id="done-med-reldiff">–</dd></div>
+        <div><dt>Average rating change</dt><dd id="done-avg-change">–</dd></div>
+      </dl>
+      <h3 class="group-title">Integrity</h3>
+      <dl class="stats">
+        <div><dt>Attempts interrupted</dt><dd id="done-flagged">–</dd></div>
+        <div><dt>Focus interruptions</dt><dd id="done-focus">–</dd></div>
+        <div><dt>Total away time</dt><dd id="done-away">–</dd></div>
+      </dl>
+      <h3 class="group-title">Matching</h3>
+      <dl class="stats">
+        <div><dt>Matched</dt><dd id="done-matched">–</dd></div>
+        <div><dt>Unmatched</dt><dd id="done-unmatched">–</dd></div>
+      </dl>
+      <div class="stack">
+        <button id="btn-export-session" type="button" class="btn">Export Session CSV</button>
+        <button id="btn-export-all" type="button" class="btn">Export Full Dataset CSV</button>
+        <button id="btn-export-json" type="button" class="btn">Export JSON Backup</button>
+        <button id="btn-import-done" type="button" class="btn">Import ChessTempo History</button>
+        <button id="btn-new-session" type="button" class="btn btn-primary">Start New Session</button>
+        <button id="btn-dataset-done" type="button" class="btn btn-ghost">View Dataset</button>
+      </div>
+    </section>
+  </main>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

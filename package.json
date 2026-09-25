@@ -1,0 +1,20 @@
+{
+  "name": "puzzletrack",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PuzzleTrack v0.1 — local-first research data collector for chess endgame timing studies.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build": "node scripts/build.mjs",
+    "clean": "rm -rf extension/dist"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.331",
+    "esbuild": "^0.21.5",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}
