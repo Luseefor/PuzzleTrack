@@ -4,6 +4,7 @@
  * production uses Date.now(). UI and background layers handle persistence + alarms.
  */
 import { newUuid } from '../utils/ids.js';
+import { COLLECTOR_VERSION } from '../models/types.js';
 import { nowIso } from '../utils/time.js';
 import { validateParticipantId, validateTargetAttempts, validateTimeLimit } from '../utils/validation.js';
 import { finalizeElapsedMs } from '../timer/attemptTimer.js';
@@ -67,6 +68,7 @@ export function createSession(
   targetAttemptsRaw: number,
   timeLimitSecondsRaw: number,
   nowMs: number = Date.now(),
+  autoMode = false,
 ): Session {
   const active = store.activeSessionId ? store.sessions[store.activeSessionId] : undefined;
   if (active && active.status === 'active') {
@@ -89,6 +91,10 @@ export function createSession(
     completed_at: null,
     status: 'active',
     study_tab_id: null,
+    auto_mode: autoMode,
+    collector_version: COLLECTOR_VERSION,
+    protocol_id: 'unconfigured',
+    study: null,
   };
   Repository.putSession(store, session);
   store.activeSessionId = session.session_id;
@@ -113,6 +119,9 @@ export function startAttempt(store: PuzzleTrackStore, sessionId: string, nowMs: 
   if (existing.some((a) => a.attempt_number === attempt_number)) {
     throw new Error('Attempt numbers cannot duplicate inside one session.');
   }
+  const timeAssignment = session.study?.plan?.time_assignment;
+  if (timeAssignment && timeAssignment.ordered_seconds.length !== session.target_attempts) throw new Error('Time assignment must cover every planned attempt.');
+  const time_limit_seconds = validateTimeLimit(timeAssignment ? timeAssignment.ordered_seconds[attempt_number - 1]! : session.time_limit_seconds);
 
   const attempt: Attempt = {
     attempt_id: newUuid(),
@@ -122,7 +131,7 @@ export function startAttempt(store: PuzzleTrackStore, sessionId: string, nowMs: 
     ended_at: null,
     elapsed_ms: 0,
     elapsed_seconds: 0,
-    time_limit_seconds: session.time_limit_seconds,
+    time_limit_seconds,
     timed_out: false,
     experimental_result: null,
     focus_loss_count: 0,
@@ -141,9 +150,13 @@ export function startAttempt(store: PuzzleTrackStore, sessionId: string, nowMs: 
     manual_problem_id: null,
     chesstempo_attempted_at: null,
     chesstempo_time_used_seconds: null,
+    step_durations_ms: null,
     chesstempo_import_id: null,
     chesstempo_source_row: null,
     match_confidence: null,
+    capture_origin: 'manual',
+    cross_validation: null,
+    requires_review: false,
   };
   Repository.putAttempt(store, attempt);
   recordEvent(store, attempt.attempt_id, 'attempt_started', nowMs);
@@ -182,12 +195,16 @@ function finishAttemptCommon(
   if (attempt.ended_at !== null) throw new Error('Attempt is already finished.');
   if (elapsedMs < 0) throw new Error('Elapsed time cannot be negative.');
 
+  if (attempt.local_trial && result !== 'completed') attempt.local_trial.outcome = result === 'timeout' ? 'timeout' : 'aborted';
+
   // Close any open away-window exactly at end time (no double counting).
   const events = Repository.eventsForAttempt(store, attemptId);
   const session = store.sessions[attempt.session_id];
   const hasStudyTab = session?.study_tab_id != null;
   let state = initialFocusState(hasStudyTab);
-  for (const e of events) state = applyFocusEvent(state, e.event_type, Date.parse(e.timestamp));
+  for (const e of events) {
+    if (Date.parse(e.timestamp) <= endedAtMs) state = applyFocusEvent(state, e.event_type, Date.parse(e.timestamp));
+  }
   state = closeAwayWindow(state, endedAtMs);
 
   attempt.ended_at = nowIso(endedAtMs);
@@ -210,6 +227,7 @@ function finishAttemptCommon(
 export function completeAttempt(store: PuzzleTrackStore, attemptId: string, nowMs: number = Date.now()): Attempt {
   const attempt = store.attempts[attemptId];
   if (!attempt) throw new Error('Attempt not found.');
+  if (nowMs >= Date.parse(attempt.started_at) + attempt.time_limit_seconds * 1000) return timeoutAttempt(store, attemptId, nowMs);
   const elapsedMs = finalizeElapsedMs(Date.parse(attempt.started_at), nowMs);
   return finishAttemptCommon(store, attemptId, 'completed', nowMs, elapsedMs, false);
 }
@@ -217,6 +235,7 @@ export function completeAttempt(store: PuzzleTrackStore, attemptId: string, nowM
 export function abortAttempt(store: PuzzleTrackStore, attemptId: string, nowMs: number = Date.now()): Attempt {
   const attempt = store.attempts[attemptId];
   if (!attempt) throw new Error('Attempt not found.');
+  if (nowMs >= Date.parse(attempt.started_at) + attempt.time_limit_seconds * 1000) return timeoutAttempt(store, attemptId, nowMs);
   const elapsedMs = finalizeElapsedMs(Date.parse(attempt.started_at), nowMs);
   return finishAttemptCommon(store, attemptId, 'aborted', nowMs, elapsedMs, false);
 }
@@ -226,7 +245,8 @@ export function timeoutAttempt(store: PuzzleTrackStore, attemptId: string, nowMs
   const attempt = store.attempts[attemptId];
   if (!attempt) throw new Error('Attempt not found.');
   const deadlineMs = Date.parse(attempt.started_at) + attempt.time_limit_seconds * 1000;
-  const endedAtMs = Math.max(nowMs, deadlineMs);
+  if (nowMs < deadlineMs) throw new Error('Cannot time out before the deadline.');
+  const endedAtMs = deadlineMs;
   const elapsedMs = attempt.time_limit_seconds * 1000;
   return finishAttemptCommon(store, attemptId, 'timeout', endedAtMs, elapsedMs, true);
 }
@@ -316,6 +336,8 @@ export function deleteSession(store: PuzzleTrackStore, sessionId: string): void 
     delete store.events[a.attempt_id];
     delete store.matches[a.attempt_id];
     delete store.pilotReview[a.attempt_id];
+    delete store.liveObservations[a.attempt_id];
+    if (store.researchEvents) delete store.researchEvents[a.attempt_id];
   }
   delete store.sessions[sessionId];
 }

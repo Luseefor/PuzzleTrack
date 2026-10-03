@@ -10,16 +10,18 @@
  * - Derived research variables are computed on demand, never stored as raw.
  */
 
-import type { AttemptMatch, ChessTempoAttempt, ChessTempoImport, MatchConfidence } from './chesstempo.js';
+import type { FrozenTrainingPool, LocalTrial } from '../trainer/types.js';
+import type { AttemptMatch, ChessTempoAttempt, ChessTempoImport, LiveObservation, MatchConfidence, StepDuration } from './chesstempo.js';
 
-export type { AttemptMatch, ChessTempoAttempt, ChessTempoImport, MatchConfidence };
+export type { AttemptMatch, ChessTempoAttempt, ChessTempoImport, LiveObservation, MatchConfidence, StepDuration };
 
 /** Supported per-puzzle time limits (seconds). Experimental conditions. */
-export const SUPPORTED_TIME_LIMITS = [900, 1800, 2700, 3600] as const;
+export const SUPPORTED_TIME_LIMITS = [900, 1200, 1800, 2700, 3600] as const;
 export type SupportedTimeLimit = (typeof SUPPORTED_TIME_LIMITS)[number];
 
 export const SUPPORTED_TIME_LIMIT_LABELS: Record<SupportedTimeLimit, string> = {
   900: '15 minutes',
+  1200: '20 minutes',
   1800: '30 minutes',
   2700: '45 minutes',
   3600: '60 minutes',
@@ -45,7 +47,61 @@ export interface Session {
    * Stores ONLY the numeric id — never URL, title, or contents.
    */
   study_tab_id: number | null;
+  /**
+   * v0.3: automation operating mode. Manual preserves the v0.1/v0.2 workflow
+   * exactly; auto lets the (flag-gated) site bridge drive start/completion.
+   */
+  auto_mode: boolean;
+  /** Instrument identity, absent for legacy sessions. */
+  collector_version?: string | null;
+  protocol_id?: string | null;
+  study?: StudyMetadata | null;
 }
+
+export interface StudyMetadata {
+  protocol_id: string;
+  task_source: string;
+  skill_rating: number | null;
+  skill_rating_source: string | null;
+  skill_recorded_at: string | null;
+  search_capture_enabled: boolean;
+  plan: StudyPlan | null;
+  local_pool_sha256?: string;
+  excluded_puzzle_ids?: string[];
+  excluded_position_keys?: string[];
+  practice_report?: { minutes: number | null; notes: string; recorded_at: string; method: 'self-report-since-previous-session-or-24h-first' };
+}
+
+export interface StudyPuzzle { id: string; rating: number; rating_source: string; task_type: string }
+export interface StudyPlan {
+  algorithm: 'sha256-xorshift32-fisher-yates-v1';
+  seed: string;
+  pool_sha256: string;
+  count_min: number;
+  count_max: number;
+  /** Frozen source reference pool, sufficient to replay the draw; legacy plans may omit it. */
+  pool?: StudyPuzzle[];
+  ordered_puzzles: StudyPuzzle[];
+  /** Independent seeded time-condition draw; absent on legacy/fixed-time plans. */
+  time_assignment?: {
+    algorithm: 'sha256-xorshift32-time-conditions-v1';
+    options_seconds: number[];
+    ordered_seconds: number[];
+  };
+}
+
+/** Explicit input, never inferred from timing; provisional protocol. */
+export type ResearchEvent = {
+  event_id: string;
+  attempt_id: string;
+  recorded_at: string;
+  method: 'manual-search-v1-provisional' | 'endgame-search-v1-provisional';
+  step_number?: number;
+} & (
+  | { kind: 'candidate'; move: string; elapsed_ms: number }
+  | { kind: 'decision'; move: string; elapsed_ms: number; stop_reason: 'satisfied' | 'time_pressure' | 'exhausted_options' | 'other' }
+  | { kind: 'benchmark'; best_move: string; engine_name: string; engine_version: string; configuration: string; position_reference: string; chosen_cp: number; best_cp: number; threshold_cp: number; perspective: 'solver'; source: 'researcher_supplied' }
+);
 
 export type ExperimentalResult = 'completed' | 'timeout' | 'aborted';
 
@@ -53,6 +109,7 @@ export type ExperimentalResult = 'completed' | 'timeout' | 'aborted';
 export type AttemptStatus = 'in_progress' | 'finished';
 
 export interface Attempt {
+  local_trial?: LocalTrial;
   attempt_id: string; // UUID
   session_id: string; // UUID
   attempt_number: number; // 1-based within session
@@ -97,10 +154,20 @@ export interface Attempt {
   chesstempo_attempted_at: string | null;
   /** Raw ChessTempo time-used, preserved exactly. */
   chesstempo_time_used_seconds: number | null;
+  /** Per-step elapsed time from visible step-counter changes; null when unsupported. */
+  step_durations_ms: StepDuration[] | null;
   chesstempo_import_id: string | null;
   /** 1-based data-row number in the imported file. */
   chesstempo_source_row: number | null;
   match_confidence: MatchConfidence | null;
+
+  // --- v0.3 live-bridge provenance (all null unless the live bridge captured data) ---
+  /** Where the chess metadata originated: manual entry, live observation, history import, or both. */
+  capture_origin: 'manual' | 'live' | 'history' | 'live+history' | null;
+  /** Cross-validation of live observation against official history export. */
+  cross_validation: 'confirmed' | 'conflict' | null;
+  /** True when automation could not interpret the site result confidently. Raw timing still preserved. */
+  requires_review: boolean;
 }
 
 export type IntegrityEventType =
@@ -140,7 +207,26 @@ export interface PilotReview {
 }
 
 /** Current schema version. v1 = original release shape (no version field). */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
+export const COLLECTOR_VERSION = '0.6.0';
+
+/**
+ * Ephemeral live-bridge connection state (v0.3) for the adapter status UI.
+ * Persisted only so popup/side-panel/dataset poll it through storage like all
+ * other UI state. Contains NO page content — numeric ids and parsed metadata
+ * only. Excluded from CSV export.
+ */
+export interface BridgeStatus {
+  connected: boolean;
+  /** Active study tab id while connected (numeric only). */
+  tabId: number | null;
+  problemId: string | null;
+  problemRating: number | null;
+  playerRating: number | null;
+  lastEvent: string | null;
+  error: string | null;
+  updatedAt: string | null; // ISO timestamp
+}
 
 /** Persisted extension state (chrome.storage.local). */
 export interface PuzzleTrackStore {
@@ -165,6 +251,26 @@ export interface PuzzleTrackStore {
    * verification status changes never modify attempts, events, or chess fields.
    */
   pilotReview: Record<string, PilotReview>;
+  /** v0.3: live-bridge observations keyed by attempt_id (at most one each). */
+  liveObservations: Record<string, LiveObservation>;
+  /** v0.3: ephemeral live-bridge connection state for the status UI. */
+  bridgeStatus: BridgeStatus;
+  localPools?: Record<string, FrozenTrainingPool>;
+  researchEvents?: Record<string, ResearchEvent[]>;
+  bridgeReceipts?: Record<string, string>;
+}
+
+export function emptyBridgeStatus(): BridgeStatus {
+  return {
+    connected: false,
+    tabId: null,
+    problemId: null,
+    problemRating: null,
+    playerRating: null,
+    lastEvent: null,
+    error: null,
+    updatedAt: null,
+  };
 }
 
 export function emptyStore(): PuzzleTrackStore {
@@ -181,5 +287,10 @@ export function emptyStore(): PuzzleTrackStore {
     importRows: {},
     matches: {},
     pilotReview: {},
+    liveObservations: {},
+    bridgeStatus: emptyBridgeStatus(),
+    localPools: {},
+    researchEvents: {},
+    bridgeReceipts: {},
   };
 }

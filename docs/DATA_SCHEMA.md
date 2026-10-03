@@ -1,8 +1,8 @@
-# PuzzleTrack v0.2 — Data Schema
+# PuzzleTrack v0.4.0 — Data Schema
 
 All timestamps: ISO-8601 UTC strings (`new Date().toISOString()`).
 All IDs: UUID v4 strings. Storage: single JSON blob `puzzletrack.v1` in `chrome.storage.local`
-(key unchanged so v0.1 data is found; contents carry `schemaVersion: 2` and migrate on load).
+(key unchanged so v0.1 data is found; contents carry `schemaVersion: 3` and migrate on load).
 Completed experimental records are append-only / immutable via the normal UI, except the
 optional `manual_problem_id` annotation (audited via `problem_id_set` event) and
 researcher-driven ChessTempo match application / unmatch (provenance-tracked).
@@ -59,7 +59,8 @@ audit metadata. **DERIVED** = computed on demand at view/export time, never stor
 | `difficulty_label` | string \| null | RAW (import) | from matched row, exact |
 | `manual_problem_id` | string \| null | RAW | optional researcher annotation; aids matching; audited via event |
 | `chesstempo_attempted_at` | ISO timestamp \| null | RAW (import) | raw ChessTempo attempt time, exact |
-| `chesstempo_time_used_seconds` | number \| null | RAW (import) | raw ChessTempo time-used, exact |
+| `chesstempo_time_used_seconds` | number \| null | RAW (import/live) | raw ChessTempo time-used, exact |
+| `step_durations_ms` | array \| null | RAW (live) | ordered `{step_number, duration_ms}` records; null duration means an unobserved transition; no move text is retained |
 | `chesstempo_import_id` | UUID \| null | PROVENANCE | which import supplied the chess data |
 | `chesstempo_source_row` | integer \| null | PROVENANCE | 1-based data-row number in the imported file |
 | `match_confidence` | `"exact" \| "high" \| "medium" \| "low" \| "unmatched" \| null` | PROVENANCE | null = unmatched |
@@ -129,13 +130,42 @@ metadata, not raw data); included in JSON backup.
 | `note` | string (≤500 chars) | free-text note, local only |
 | `updated_at` | ISO timestamp | |
 
+## liveObservations (v0.3, keyed by attempt_id — at most one each)
+
+Semantic snapshots captured by the flag-gated live bridge. Every field nullable;
+unavailable stays null, never fabricated. The observation is the audit trail for
+auto-started attempts and the baseline for history cross-validation.
+
+| field | type | notes |
+|---|---|---|
+| `attempt_id` | string | FK → attempts |
+| `problemId` | string | stable id reported by the adapter |
+| `problemRating` | number \| null | as displayed |
+| `difficultyLabel` | string \| null | as displayed |
+| `mode` | string \| null | training mode label, if shown |
+| `playerRatingBefore` | number \| null | displayed rating before the attempt |
+| `siteResult` | `"correct" \| "incorrect" \| "completed" \| "failed" \| "unknown"` | `"unknown"` when unconfident |
+| `timeUsedSeconds` | number \| null | as displayed |
+| `movesUsed` | number \| null | as displayed |
+| `averageMoves` | number \| null | null (no observable live source; history remains its source) |
+| `playerRatingAfter` | number \| null | as displayed |
+| `ratingChange` | number \| null | as displayed |
+| `lateArrival` | boolean | true when the result arrived after the attempt ended |
+| `observedAt` | ISO timestamp | last update |
+
+## bridgeStatus (v0.3, ephemeral UI state — excluded from CSV)
+
+`connected`, `tabId` (numeric only), `problemId`, `problemRating`,
+`playerRating`, `lastEvent`, `error`, `updatedAt`. Merge rule is recency-wins
+(newest `updatedAt`), since the UI tick never authors it.
+
 ## store envelope (`PuzzleTrackStore`)
 
 ```text
-schemaVersion: 2
+schemaVersion: 3
 participants: Record<participant_id, Participant>
-sessions:     Record<session_id, Session>
-attempts:     Record<attempt_id, Attempt>
+sessions:     Record<session_id, Session>   # v0.3: + auto_mode
+attempts:     Record<attempt_id, Attempt>   # v0.3: + capture_origin, cross_validation, requires_review
 events:       Record<attempt_id, IntegrityEvent[]>
 activeSessionId: string | null
 activeAttemptId: string | null
@@ -144,11 +174,17 @@ imports:      Record<importId, ChessTempoImport>
 importRows:   Record<importId, ChessTempoAttempt[]>
 matches:      Record<attemptId, AttemptMatch>
 pilotReview:  Record<attemptId, PilotReview>   # review metadata only, never raw
+liveObservations: Record<attemptId, LiveObservation>   # v0.3, at most one each
+bridgeStatus: BridgeStatus   # v0.3 ephemeral, recency-wins merge
 ```
 
-v1 blobs (no `schemaVersion`) migrate on load: sessions gain `study_tab_id: null`,
-attempts gain null/empty v0.2 fields, and empty `imports`/`importRows`/`matches`/
-`pilotReview` are added. Every v1 record is preserved; migration is pure and unit-tested.
+v1 blobs (no `schemaVersion`) migrate on load: sessions gain `study_tab_id: null`
+and `auto_mode: false`, attempts gain null/empty v0.2 fields plus v0.3
+`capture_origin` (matched records backfill `'history'`, unmatched stay null),
+`cross_validation: null`, `requires_review: false`, and empty
+`imports`/`importRows`/`matches`/`pilotReview`/`liveObservations` are added
+(`bridgeStatus` defaults to disconnected). Every v1 record is preserved;
+migration is pure and unit-tested.
 
 ## concurrent-write safety (merge-save)
 
@@ -165,10 +201,10 @@ replace/remove operations (session delete, backup restore, unmatch) keep plain
 
 ## CSV mapping
 
-One row per attempt, header (31 cols):
+One row per attempt, header (34 cols):
 
 ```text
-participant_id,session_id,attempt_id,attempt_number,started_at,ended_at,elapsed_ms,elapsed_seconds,time_limit_seconds,timed_out,experimental_result,focus_loss_count,total_time_away_ms,integrity_flag,problem_id,problem_rating,player_rating_before,player_rating_after,chesstempo_result,moves_used,average_moves,rating_change,difficulty_label,chesstempo_attempted_at,chesstempo_time_used_seconds,match_confidence,chesstempo_import_id,chesstempo_source_row,relative_difficulty,timer_difference_seconds,away_time_percentage
+participant_id,session_id,attempt_id,attempt_number,started_at,ended_at,elapsed_ms,elapsed_seconds,time_limit_seconds,timed_out,experimental_result,focus_loss_count,total_time_away_ms,integrity_flag,problem_id,problem_rating,player_rating_before,player_rating_after,chesstempo_result,moves_used,average_moves,rating_change,difficulty_label,chesstempo_attempted_at,chesstempo_time_used_seconds,step_durations_ms,match_confidence,chesstempo_import_id,chesstempo_source_row,capture_origin,cross_validation,relative_difficulty,timer_difference_seconds,away_time_percentage
 ```
 
 - `participant_id` joined from the parent session.
@@ -179,7 +215,12 @@ participant_id,session_id,attempt_id,attempt_number,started_at,ended_at,elapsed_
   export from raw values (`problem_rating − player_rating_before`;
   `elapsed_seconds − chesstempo_time_used_seconds`; `total_time_away_ms / elapsed_ms`),
   null when inputs are missing (zero elapsed → null, never Infinity). Everything
-  before them is **RAW** or **PROVENANCE**.
+  before them is **RAW** or **PROVENANCE**, including v0.3 `capture_origin`
+  (`manual`/`live`/`history`/`live+history`) and `cross_validation`
+  (empty until a live observation is compared against history, then
+  `confirmed`/`conflict`).
+  `requires_review`, live observations, and bridge status are intentionally NOT
+  CSV columns (review/audit surfaces: Pilot Review table, validation, JSON backup).
 
 ## JSON backup
 
@@ -201,3 +242,17 @@ unique ids, away ≤ elapsed, flag↔loss agreement), match/provenance integrity
 values without a match link), derived recomputation (finite, away % in [0,1]),
 duplicate ids. Warnings (pilot QA, not failures): unmatched attempts, timer
 agreement REVIEW (>2–5 s) / WARNING (>5 s), orphan review entries.
+
+## Research extension (schema 3)
+
+See [Research capture](RESEARCH_CAPTURE.md) and `src/models/types.ts` for study metadata, frozen seeded pools, append-only research events and bridge receipts. CSV now has 84 columns and includes raw audit event arrays, live observation and review metadata. Import provenance includes explicit naive-timestamp UTC offset and parser version; missing legacy values remain unavailable.
+
+Local pools are stored once by SHA-256 in `localPools` including the original JSON bytes; study metadata references `local_pool_sha256`. Attempts optionally contain `local_trial` with source rating/RD, positions, move log, per-turn presentation callbacks, task outcome and archived initial tablebase. Local search events use method `endgame-search-v1-provisional` and `step_number`.
+
+## Local exposure exclusion (0.5.0)
+
+`session.study.excluded_puzzle_ids` and `excluded_position_keys` optionally archive prior participant exposures removed from plan eligibility. Position keys are the first four fields of the solver FEN, ignoring counters. `plan.pool` contains the exact remaining reference pool for seed replay. Daily source metadata contains UTC batch date, bank hash, algorithm and excluded-ID/position hashes. The exact daily pool JSON is archived under `localPools`; the full local bank and issued batch directory are separately backed up from `data/endgame`.
+
+## v0.6.0 schedule and practice metadata
+
+CSV appends 11 fields (84 total): study_phase, schedule_sha256, schedule_day, batch_code, difficulty_band, schedule_opens_at, schedule_closes_at, schedule_json, prior_chess_practice_minutes, prior_chess_practice_notes, practice_reported_at. Frozen local source metadata archives participant ID, participant seed, exact schedule JSON/hash/day/time/window/phase/batch identifier. StudyMetadata optionally includes practice_report with minutes (null unknown, zero explicit none), notes, timestamp and self-report method. No legacy values are inferred. Pilot schedule_day=1 refers to the draft entry used, not main study day one. See [Daily schedule](DAILY_STUDY_SCHEDULE.md).

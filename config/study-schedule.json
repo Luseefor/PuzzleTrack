@@ -1,0 +1,29 @@
+{
+  "format": "puzzletrack-study-schedule",
+  "version": 1,
+  "revision": "draft-daily-endgame-v1",
+  "enabled": false,
+  "timezone": "America/Chicago",
+  "start_date": null,
+  "opens": null,
+  "closes": null,
+  "difficulty_note": "Provisional Lichess source-rating bands, not participant-relative difficulty. Review before enabling.",
+  "bands": [
+    {"id": "easy", "min": 400, "max": 1399},
+    {"id": "hard", "min": 1800, "max": 2600}
+  ],
+  "days": [
+    {"seconds": 900, "quotas": {"easy": 5, "hard": 5}},
+    {"seconds": 1200, "quotas": {"easy": 0, "hard": 10}},
+    {"seconds": 1200, "quotas": {"easy": 5, "hard": 5}},
+    {"seconds": 900, "quotas": {"easy": 0, "hard": 10}},
+    {"seconds": 1200, "quotas": {"easy": 0, "hard": 10}},
+    {"seconds": 900, "quotas": {"easy": 5, "hard": 5}},
+    {"seconds": 900, "quotas": {"easy": 0, "hard": 10}},
+    {"seconds": 1200, "quotas": {"easy": 5, "hard": 5}},
+    {"seconds": 900, "quotas": {"easy": 0, "hard": 10}},
+    {"seconds": 1200, "quotas": {"easy": 5, "hard": 5}},
+    {"seconds": 900, "quotas": {"easy": 5, "hard": 5}},
+    {"seconds": 1200, "quotas": {"easy": 0, "hard": 10}}
+  ]
+}

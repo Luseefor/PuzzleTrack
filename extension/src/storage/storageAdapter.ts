@@ -3,6 +3,16 @@ export interface StorageAdapter {
   load(): Promise<string | null>;
   save(raw: string): Promise<void>;
   clear(): Promise<void>;
+  /** Serialize a complete read/modify/write transaction across all writers. */
+  withLock?<T>(operation: () => Promise<T>): Promise<T>;
+}
+
+const localQueues = new WeakMap<StorageAdapter, Promise<unknown>>();
+export function withStorageLock<T>(adapter: StorageAdapter, operation: () => Promise<T>): Promise<T> {
+  if (adapter.withLock) return adapter.withLock(operation);
+  const result = (localQueues.get(adapter) ?? Promise.resolve()).then(operation, operation);
+  localQueues.set(adapter, result.catch(() => undefined));
+  return result;
 }
 
 /** In-memory adapter: used by unit tests and as fallback. */

@@ -75,7 +75,7 @@ export function isCorrectChessTempoResult(result: string | null): boolean | null
   if (result === null) return null;
   const t = result.trim().toLowerCase();
   if (t === '') return null;
-  return (
+  if (
     t === 'win' ||
     t === 'won' ||
     t === 'correct' ||
@@ -85,7 +85,9 @@ export function isCorrectChessTempoResult(result: string | null): boolean | null
     t === '1-0' ||
     t === 'true' ||
     t === 'yes'
-  );
+  ) return true;
+  if (['loss', 'lost', 'incorrect', 'wrong', 'failed', 'fail', '0', '0-1', 'false', 'no'].includes(t)) return false;
+  return null;
 }
 
 export interface SessionChessSummary {

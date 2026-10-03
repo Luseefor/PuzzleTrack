@@ -4,11 +4,22 @@
  * All ChessTempo data arrives via MANUAL file import (user-downloaded history
  * CSV). No scraping, no network, no DOM access — ever. Raw values are preserved
  * exactly; derived research variables are computed on demand (see analysis/).
+ *
+ * v0.3 adds LiveObservation for the flag-gated live bridge. Live observations
+ * are semantic snapshots (plain data, no DOM) produced ONLY by the isolated
+ * site adapter in src/integrations/ — core modules never touch page content.
  */
 import type { Attempt } from './types.js';
 
 /** Confidence of a PuzzleTrack <-> ChessTempo match. Never silently guessed. */
 export type MatchConfidence = 'exact' | 'high' | 'medium' | 'low' | 'unmatched';
+
+/** Duration observed for one explicit visible progress step; no move text is retained. */
+export interface StepDuration {
+  step_number: number;
+  /** Null means the page skipped an observable transition, so timing is unknown. */
+  duration_ms: number | null;
+}
 
 /** Normalized ChessTempo history row. Raw source row kept for audit/debug. */
 export interface ChessTempoAttempt {
@@ -47,6 +58,9 @@ export interface ChessTempoImport {
   importId: string; // UUID
   importedAt: string; // ISO
   originalFilename: string;
+  /** Explicit offset used for naive source timestamps; never guessed. Legacy imports: unavailable. */
+  timezoneOffsetMinutes?: number | null;
+  parserVersion?: string;
   /** FNV-1a hash of normalized file bytes — duplicate-import detection. */
   fileFingerprint: string;
   totalRows: number;
@@ -107,4 +121,31 @@ export interface DuplicateReport {
   duplicateRowIds: string[];
   newRowIds: string[];
   conflictRowIds: string[];
+}
+
+/**
+ * Live observation snapshot (v0.3). Plain semantic data captured by the
+ * flag-gated site bridge while the participant solves normally. Every field
+ * is nullable: unavailable values stay null, never fabricated. Keyed by
+ * attempt_id in the store; one observation per attempt at most.
+ */
+export interface LiveObservation {
+  attempt_id: string;
+  problemId: string;
+  problemRating: number | null;
+  difficultyLabel: string | null;
+  /** Training mode label as displayed, if any (e.g. "endgame"). */
+  mode: string | null;
+  /** Displayed player rating captured BEFORE the attempt started. */
+  playerRatingBefore: number | null;
+  /** Site result as interpreted by the adapter; "unknown" when ambiguous. */
+  siteResult: 'correct' | 'incorrect' | 'completed' | 'failed' | 'unknown';
+  timeUsedSeconds: number | null;
+  movesUsed: number | null;
+  averageMoves: number | null;
+  playerRatingAfter: number | null;
+  ratingChange: number | null;
+  /** True when the observation arrived after the experimental attempt ended. */
+  lateArrival: boolean;
+  observedAt: string; // ISO timestamp of last update
 }

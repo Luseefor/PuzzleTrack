@@ -10,19 +10,22 @@ import { deleteSession, setPilotReview } from '../session/sessionManager.js';
 import { attemptsToCsv, downloadFilename } from '../export/csv.js';
 import { backupFilename, buildBackup, parseBackup, serializeBackup } from '../export/jsonBackup.js';
 import { formatDurationMs } from '../utils/time.js';
-import { validateStore, type ValidationIssue } from '../validation/pilotValidator.js';
+import { validateStore, computeReadiness, type ValidationIssue, type ValidationReport } from '../validation/pilotValidator.js';
+import { CHESSTEMPO_LIVE_BRIDGE } from '../integrations/featureFlags.js';
+import type { AdapterDiagnostics } from '../integrations/chessTempo/chessTempoTypes.js';
 import { parseChessTempoCsv, buildDuplicateReport, type ImportParseResult } from '../importer/chesstempoImporter.js';
 import { assignMatches, isAutoAppliable, scoreAttempt, toMatchable } from '../matching/matcher.js';
 import { allImportedRows, applyMatch, registerImport, type ConflictResolution } from '../matching/applyMatch.js';
 import { awayTimePercentage, relativeDifficulty, timerDifferenceSeconds } from '../analysis/derived.js';
 import type { Attempt, PuzzleTrackStore } from '../models/types.js';
 import type { ChessTempoAttempt, MatchConflict, MatchResult } from '../models/chesstempo.js';
+import { recordBenchmark, summarizeSearch } from '../research/searchCapture.js';
 
 const repo = new Repository(new ChromeStorageAdapter());
 
 const COLUMNS: string[] = [
   'Participant', 'Session', 'Attempt', 'Started', 'Elapsed', 'Limit', 'Result', 'Timed Out',
-  'Problem ID', 'Problem rating', 'Player rating', 'CT result', 'CT time', 'Moves', 'Rating change',
+  'Problem ID', 'Problem rating', 'Player rating', 'CT result', 'CT time', 'Step times', 'Moves', 'Rating change',
   'Rel. difficulty', 'Timer diff', 'Focus losses', 'Away time', 'Away %', 'Integrity flag',
 ];
 
@@ -126,10 +129,11 @@ async function renderTable(): Promise<void> {
       a.experimental_result ?? '(in progress)',
       a.timed_out ? 'TRUE' : 'FALSE',
       a.problem_id ?? a.manual_problem_id ?? '',
-      a.problem_rating === null ? '' : String(a.problem_rating),
+      a.local_trial ? `${a.local_trial.rating} (Lichess)` : a.problem_rating === null ? '' : String(a.problem_rating),
       a.player_rating_before === null ? '' : String(a.player_rating_before),
-      a.chesstempo_result ?? '',
+      a.local_trial?.outcome ?? a.chesstempo_result ?? '',
       a.chesstempo_time_used_seconds === null ? '' : `${a.chesstempo_time_used_seconds}s`,
+      (a.step_durations_ms ?? []).map((s) => `${s.step_number}:${s.duration_ms === null ? '—' : `${(s.duration_ms / 1000).toFixed(2)}s`}`).join('; '),
       a.moves_used === null ? '' : String(a.moves_used),
       a.rating_change === null ? '' : fmtNum(a.rating_change, true),
       fmtNum(relativeDifficulty(a), true),
@@ -146,6 +150,28 @@ async function renderTable(): Promise<void> {
     }
     body.appendChild(tr);
   }
+  renderSearchRecords(store);
+}
+
+function renderSearchRecords(store: PuzzleTrackStore): void {
+  const container = $('search-records'); container.replaceChildren();
+  const select = $('benchmark-attempt') as HTMLSelectElement;
+  const previous = select.value; select.replaceChildren();
+  for (const a of Object.values(store.attempts)) {
+    const events = store.researchEvents?.[a.attempt_id] ?? [];
+    if (!events.length) continue;
+    const summary = summarizeSearch(events);
+    const p = document.createElement('p');
+    const participant = store.sessions[a.session_id]?.participant_id ?? '?';
+    p.textContent = `${participant} · ${short(a.session_id)} · trial ${a.attempt_number}: first ${summary.first_candidate ?? 'unrecorded'}; final ${summary.final_choice ?? 'unrecorded'}; reason ${summary.stop_reason ?? 'unrecorded'}; gap ${summary.evaluation_gap_cp ?? 'unavailable'} cp. This is not an inferred cognition score.`;
+    container.appendChild(p);
+    if (a.ended_at !== null && summary.final_choice !== null) {
+      const option = document.createElement('option'); option.value = a.attempt_id;
+      option.textContent = `${participant} · ${short(a.session_id)} · trial ${a.attempt_number} · ${summary.final_choice}`;
+      select.appendChild(option);
+    }
+  }
+  if ([...select.options].some(o => o.value === previous)) select.value = previous;
 }
 
 async function renderImports(): Promise<void> {
@@ -443,7 +469,8 @@ function wireImport(): void {
       if (!file) return;
       try {
         const text = await file.text();
-        pending = parseChessTempoCsv(text, file.name, Date.now());
+        const offsetText = ($('import-timezone') as HTMLInputElement).value.trim();
+        pending = parseChessTempoCsv(text, file.name, Date.now(), offsetText === '' ? {} : { timezoneOffsetMinutes: Number(offsetText) });
         const store = await repo.loadStore();
         const dup = buildDuplicateReport(allImportedRows(store), pending.rows);
         renderPreview(dup);
@@ -563,7 +590,46 @@ async function runValidation(): Promise<void> {
   summary.appendChild(p);
   renderIssues('validation-errors', 'Errors', report.errors);
   renderIssues('validation-warnings', 'Warnings', report.warnings);
+  await renderReadiness(store, report);
   section.scrollIntoView();
+}
+
+async function renderReadiness(store: PuzzleTrackStore, report: ValidationReport): Promise<void> {
+  const list = $('readiness-list');
+  list.innerHTML = '';
+  // Live diagnostics only when the bridge is connected; otherwise the
+  // readiness engine assesses from stored observations + validation.
+  let diagnostics: AdapterDiagnostics | null = null;
+  const tabId = store.bridgeStatus.tabId;
+  if (CHESSTEMPO_LIVE_BRIDGE && store.bridgeStatus.connected && tabId !== null) {
+    try {
+      const res = (await chrome.runtime.sendMessage({ kind: 'pt-diagnostic-request', tabId })) as {
+        ok: boolean;
+        diagnostics?: AdapterDiagnostics;
+      };
+      if (res.ok && res.diagnostics) diagnostics = res.diagnostics;
+    } catch {
+      /* tab unreachable: assess without live diagnostics */
+    }
+  }
+  const readiness = computeReadiness(store, { bridgeBuild: CHESSTEMPO_LIVE_BRIDGE, diagnostics, validation: report });
+  const ul = document.createElement('ul');
+  for (const c of readiness.checks) {
+    const li = document.createElement('li');
+    const mark = c.status === 'pass' ? '✓' : c.status === 'fail' ? '✗' : '…';
+    li.textContent = `${mark} ${c.label}${c.required ? '' : ' (optional)'} — ${c.detail}`;
+    ul.appendChild(li);
+  }
+  list.appendChild(ul);
+  const verdict = $('readiness-verdict');
+  verdict.innerHTML = '';
+  const strong = document.createElement('strong');
+  strong.textContent = readiness.ready ? 'PILOT STATUS: READY' : 'PILOT STATUS: NOT READY';
+  verdict.appendChild(strong);
+  if (!readiness.ready) {
+    const reasons = readiness.checks.filter((c) => c.required && c.status !== 'pass');
+    verdict.append(document.createTextNode(` — ${reasons.map((c) => `${c.label}: ${c.detail}`).join('; ')}`));
+  }
 }
 
 // ---------------- pilot review (metadata only, raw untouched) ----------------
@@ -578,7 +644,7 @@ async function renderPilotReview(): Promise<void> {
   if (attempts.length === 0) {
     const tr = document.createElement('tr');
     const td = document.createElement('td');
-    td.colSpan = 14;
+    td.colSpan = 15;
     td.textContent = 'No attempts recorded yet.';
     tr.appendChild(td);
     body.appendChild(tr);
@@ -594,6 +660,7 @@ async function renderPilotReview(): Promise<void> {
       a.problem_id ?? a.manual_problem_id ?? '',
       formatDurationMs(a.elapsed_ms),
       ctTime,
+      (a.step_durations_ms ?? []).map((s) => `${s.step_number}:${s.duration_ms === null ? '—' : `${(s.duration_ms / 1000).toFixed(2)}s`}`).join('; '),
       a.problem_rating === null ? '' : String(a.problem_rating),
       a.player_rating_before === null ? '' : String(a.player_rating_before),
       rel === null ? '' : (rel > 0 ? `+${rel}` : String(rel)),
@@ -601,7 +668,7 @@ async function renderPilotReview(): Promise<void> {
       a.experimental_result ?? '',
       String(a.focus_loss_count),
       formatDurationMs(a.total_time_away_ms),
-      a.match_confidence ?? 'unmatched',
+      (a.match_confidence ?? 'unmatched') + (a.requires_review ? ' · site review' : ''),
       review?.status ?? 'unreviewed',
     ]) {
       const td = document.createElement('td');
@@ -639,16 +706,42 @@ async function renderPilotReview(): Promise<void> {
 // ---------------- misc actions ----------------
 
 function wireActions(): void {
+  $('benchmark-form').addEventListener('submit', event => {
+    event.preventDefault();
+    void (async () => {
+      try {
+        const value = (id: string): string => ($(id) as HTMLInputElement).value.trim();
+        await repo.transact(store => recordBenchmark(store, value('benchmark-attempt'), {
+          best_move: value('benchmark-best-move'), engine_name: value('benchmark-engine'), engine_version: value('benchmark-version'),
+          configuration: value('benchmark-config'), position_reference: value('benchmark-position'),
+          chosen_cp: Number(value('benchmark-chosen')), best_cp: Number(value('benchmark-best')),
+          threshold_cp: Number(value('benchmark-threshold')),
+        }));
+        $('benchmark-status').textContent = 'Benchmark saved with provenance. Earlier entries remain in the audit log.';
+        await renderTable();
+      } catch (e) { $('benchmark-status').textContent = e instanceof Error ? e.message : 'Could not save benchmark.'; }
+    })();
+  });
   for (const id of ['filter-participant', 'filter-session', 'filter-result', 'filter-matched', 'filter-integrity', 'sort-by']) {
     $(id).addEventListener('change', () => void renderTable());
   }
   $('btn-validate').addEventListener('click', () => void runValidation());
+  $('btn-export-participant').addEventListener('click', () => {
+    void (async () => {
+      const pid = ($('filter-participant') as HTMLSelectElement).value;
+      if (!pid) { window.alert('Select a participant in the participant filter first.'); return; }
+      const store = await repo.loadStore();
+      const m = new Map(Object.values(store.sessions).map(s => [s.session_id, s.participant_id]));
+      const attempts = Object.values(store.attempts).filter(a => m.get(a.session_id) === pid);
+      download(downloadFilename(pid, new Date().toISOString()), attemptsToCsv(m, attempts, store), 'text/csv');
+    })();
+  });
   $('btn-export-all').addEventListener('click', () => {
     void (async () => {
       const store = await repo.loadStore();
       const m = new Map<string, string>();
       for (const s of Object.values(store.sessions)) m.set(s.session_id, s.participant_id);
-      download(downloadFilename('full-dataset', new Date().toISOString()), attemptsToCsv(m, Object.values(store.attempts)), 'text/csv');
+      download(downloadFilename('full-dataset', new Date().toISOString()), attemptsToCsv(m, Object.values(store.attempts), store), 'text/csv');
     })();
   });
   $('btn-export-json').addEventListener('click', () => {

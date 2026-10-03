@@ -24,7 +24,11 @@ function base(partial: Partial<Attempt> = {}): Attempt {
     average_moves: null, rating_change: null, difficulty_label: null,
     manual_problem_id: null, chesstempo_attempted_at: null,
     chesstempo_time_used_seconds: null, chesstempo_import_id: null,
+    step_durations_ms: null,
     chesstempo_source_row: null, match_confidence: null,
+    capture_origin: null,
+    cross_validation: null,
+    requires_review: false,
     ...partial,
   };
 }
@@ -68,7 +72,7 @@ describe('derived variables', () => {
     expect(isCorrectChessTempoResult('loss')).toBe(false);
     expect(isCorrectChessTempoResult(null)).toBeNull();
     expect(isCorrectChessTempoResult('')).toBeNull();
-    expect(isCorrectChessTempoResult('mysterious-future-value')).toBe(false);
+    expect(isCorrectChessTempoResult('mysterious-future-value')).toBeNull();
   });
 
   it('chess summary ignores missing values instead of misleading', () => {

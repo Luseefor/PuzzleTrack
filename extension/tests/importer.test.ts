@@ -10,8 +10,8 @@ import { parseCsvText } from '../src/importer/csvParse.js';
 
 const VALID_CSV = [
   'Problem ID,Date,Problem Rating,Player Rating,Result,Time Used (s),Moves,Rating Change',
-  '81496,2026-09-20 13:02:44,1200,1000,Win,43,12,+16',
-  '99213,2026-09-20 13:16:05,1250,1016,Loss,102,18,-11',
+  '81496,2026-09-20T13:02:44Z,1200,1000,Win,43,12,+16',
+  '99213,2026-09-20T13:16:05Z,1250,1016,Loss,102,18,-11',
 ].join('\n');
 
 describe('csv parser', () => {
@@ -46,7 +46,7 @@ describe('chesstempo importer', () => {
     expect(rows[0]?.timeUsedSeconds).toBe(43);
     expect(rows[0]?.movesUsed).toBe(12);
     expect(rows[0]?.ratingChange).toBe(16);
-    expect(rows[0]?.attemptedAt).toBe(new Date(Date.parse('2026-09-20 13:02:44')).toISOString());
+    expect(rows[0]?.attemptedAt).toBe(new Date(Date.parse('2026-09-20T13:02:44Z')).toISOString());
     expect(rows[0]?.validity).toBe('valid');
     expect(rows[0]?.sourceRow).toBe(1);
     expect(rows[0]?.raw['Problem ID']).toBe('81496');
@@ -60,7 +60,7 @@ describe('chesstempo importer', () => {
   });
 
   it('classifies partial and invalid rows without dropping them', () => {
-    const csv = ['Problem ID,Date', '81496,', ',2026-09-20 13:02:44', ','].join('\n');
+    const csv = ['Problem ID,Date', '81496,', ',2026-09-20T13:02:44Z', ','].join('\n');
     const { import: imp, rows } = parseChessTempoCsv(csv, 'h.csv');
     expect(imp.validRows).toBe(0);
     expect(imp.partialRows).toBe(2);
@@ -94,7 +94,7 @@ describe('chesstempo importer', () => {
     expect(dup.alreadyImported).toBe(2);
     expect(dup.newRecords).toBe(0);
 
-    const overlap = parseChessTempoCsv(VALID_CSV + '\n777,2026-09-21 10:00:00,1300,1016,Win,50,10,+14', 'history2.csv');
+    const overlap = parseChessTempoCsv(VALID_CSV + '\n777,2026-09-21T10:00:00Z,1300,1016,Win,50,10,+14', 'history2.csv');
     const dup2 = buildDuplicateReport(a.rows, overlap.rows);
     expect(dup2.alreadyImported).toBe(2);
     expect(dup2.newRecords).toBe(1);

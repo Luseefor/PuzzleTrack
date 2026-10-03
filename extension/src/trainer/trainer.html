@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PuzzleTrack — Chess decision study</title>
+  <link rel="stylesheet" href="trainer.css">
+</head>
+<body>
+<main>
+  <header class="app-header">
+    <div class="identity"><span class="brand-mark" aria-hidden="true">♜</span><div><p class="eyebrow">PUZZLETRACK</p><h1>Chess decision study</h1></div></div>
+    <div class="header-actions"><span id="view-label" class="badge">Research setup</span><button id="export-json" class="secondary researcher-controls" aria-label="Export research backup"><span class="full-export-label">Export research backup</span><span class="compact-export-label" aria-hidden="true">Export JSON</span></button></div>
+  </header>
+  <p id="storage-note" class="storage-note muted"></p>
+  <p id="schedule-status" class="storage-note muted" role="status"></p>
+  <p id="error" role="alert" hidden></p>
+
+  <section id="setup">
+    <div class="section-intro"><p class="eyebrow">SESSION CONFIGURATION</p><h2>Configure a session.</h2><p class="muted">Set the conditions once. Every assignment is saved for replay.</p></div>
+    <div class="setup-layout">
+      <form id="setup-form" class="card setup-form">
+        <fieldset><legend><span class="section-number">01</span> Participant &amp; protocol</legend>
+          <div class="fields"><label>Participant ID<input id="participant" required maxlength="32" placeholder="P01" autocomplete="off"><span class="hint">Use a pseudonymous ID.</span></label><label>Protocol revision<input id="protocol" value="provisional-endgame-daily-fixed-time-v3" required maxlength="100"></label></div>
+        </fieldset>
+        <fieldset><legend><span class="section-number">02</span> Study conditions</legend>
+          <div class="fields">
+            <label class="wide">Time per puzzle for this session<select id="limit"><option value="900" selected>15 minutes</option><option value="1200">20 minutes</option><option value="1800">30 minutes</option><option value="2700">45 minutes</option><option value="3600">60 minutes</option></select><span class="hint">Every puzzle uses this limit. Choose a different limit for another day.</span></label>
+            <p id="question-description" class="wide hint">Questions per session: <strong>10</strong>. Puzzles and their order are randomly drawn within the source-rating range below. Exact easy/hard counts are not guaranteed.</p>
+            <label>Minimum source rating<input id="rating-min" type="number" min="0" max="4000" value="400" required></label><label>Maximum source rating<input id="rating-max" type="number" min="0" max="4000" value="2600" required></label>
+          </div>
+          <label class="check-row"><input id="exclude-seen" type="checkbox" checked><span>Use unseen positions<span class="hint">Exclude previous exposures for this participant in this dataset.</span></span></label>
+        </fieldset>
+        <fieldset><legend><span class="section-number">03</span> Reported skill <span class="optional">Optional</span></legend>
+          <p class="hint fieldset-note">This records an existing rating. An AI skill assessment is not implemented.</p>
+          <div class="fields"><label>Participant skill rating<input id="skill" type="number" min="0" step="any" placeholder="e.g. 1400"></label><label>Rating source / scale<input id="skill-source" maxlength="100" placeholder="e.g. Lichess puzzles, self-reported"></label></div>
+        </fieldset>
+<fieldset><legend><span class="section-number">04</span> Other chess practice <span class="optional">Optional report</span></legend><p class="hint">Since the previous study session, or the last 24 hours for a first session. Include other sites and offline play. Blank means unknown; enter 0 only if none.</p><div class="fields"><label>Minutes<input id="practice-minutes" type="number" min="0" max="1000000" step="1" placeholder="Unknown"></label><label>Practice notes<input id="practice-notes" maxlength="1000" placeholder="e.g. online games, endgame exercises"></label></div></fieldset>
+        <details class="advanced"><summary>Reproducibility &amp; custom source</summary><div class="fields"><label class="wide">Session seed<input id="seed" required maxlength="128" placeholder="Generated automatically"><span class="hint">Generated for each session. Keep it to replay the saved draw.</span></label><label class="wide">Reviewed frozen pool<input id="pool-file" type="file" accept=".json"><span class="hint">Optional JSON upload replaces the source for new sessions.</span></label></div></details>
+        <div class="form-actions"><p class="hint">Positions stay hidden until the participant starts.</p><button id="start-session" type="submit" disabled>Start session <span aria-hidden="true">→</span></button></div>
+      </form>
+      <aside class="setup-aside" aria-label="Source and session information">
+        <div class="card source-card"><span class="badge source-badge">LOCAL PUZZLE SOURCE</span><p id="pool-count" class="source-count">—</p><h3 id="pool-label">Loading source</h3><p class="muted">Endgame positions with legal reference sequences. Ratings remain frozen with each session.</p><details class="source-details"><summary>Source details &amp; checksum</summary><p id="pool-status" role="status">Loading frozen source…</p></details></div>
+        <div class="aside-note"><h3>Before you begin</h3><ul><li>Confirm the protocol and time conditions.</li><li>Keep one study tab open.</li><li>Export JSON after collection.</li></ul><p class="hint">The source sample and research measures remain provisional. Review them before recruitment.</p></div>
+      </aside>
+    </div>
+  </section>
+
+  <section id="ready" class="card state-card" hidden><span class="state-symbol" aria-hidden="true">♙</span><p class="eyebrow">WHEN YOU ARE READY</p><h2 id="ready-heading"></h2><p class="muted">The position appears when you start. The clock runs until the attempt ends; leaving the page records an interruption.</p><button id="start-trial">Show position and start timer <span aria-hidden="true">→</span></button></section>
+
+  <section id="play" hidden>
+    <div class="play-head"><div><p class="eyebrow">CURRENT POSITION</p><h2 id="trial-heading"></h2><p id="turn-label" class="muted"></p></div><div class="timer"><span>Time remaining</span><strong id="remaining"></strong></div></div>
+    <div class="workspace">
+      <div class="board-panel"><div id="board" class="board" aria-label="Chessboard"></div><p id="board-caption" class="hint">Select a piece, then a destination. You can also enter a move below.</p></div>
+      <div class="card decisions"><div class="decision-intro"><h3>Your decision</h3><p class="muted">Record a candidate when it becomes plausible. Then choose your move.</p></div>
+        <div class="move-fields"><label>Move (UCI)<input id="move" placeholder="e2e4" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="5" aria-describedby="board-caption"></label><label>Promotion<select id="promotion"><option value="q">Queen</option><option value="r">Rook</option><option value="b">Bishop</option><option value="n">Knight</option></select></label></div>
+        <button id="candidate" class="secondary">Record candidate now</button><p id="candidate-status" class="candidate-status" role="status"></p>
+        <div class="decision-divider"></div><label>Why are you stopping this search?<select id="reason"><option value="" selected disabled>Select a reason</option><option value="satisfied">Found a satisfactory move</option><option value="time_pressure">Time pressure</option><option value="exhausted_options">Finished considering options</option><option value="other">Other</option></select></label>
+        <button id="submit-move">Play chosen move <span aria-hidden="true">→</span></button><button id="abort" class="quiet">End this position</button><p id="play-status" role="status"></p>
+      </div>
+    </div>
+  </section>
+
+  <section id="result" class="card state-card" hidden><span class="state-symbol" aria-hidden="true">·</span><p class="eyebrow">DECISION SESSION</p><h2 id="result-heading"></h2><p id="result-text" class="muted"></p><button id="next">Continue <span aria-hidden="true">→</span></button></section>
+  <section id="finished" class="card state-card" hidden><span class="state-symbol" aria-hidden="true">□</span><p class="eyebrow">COLLECTION COMPLETE</p><h2>Session complete</h2><p id="finished-text" class="muted"></p><button id="new-session">New session <span aria-hidden="true">→</span></button></section>
+
+  <button id="archive-session" class="secondary" hidden>End this session early</button>
+  <footer class="researcher-controls"><div class="export-heading"><div><p class="eyebrow">RESEARCH RECORDS</p><h3>Review &amp; export</h3></div><div class="export-actions"><button id="export-csv" class="secondary">Export participant CSV</button><button id="validate" class="secondary">Validate dataset</button></div></div><p id="validation" role="status"></p><p id="warning-groups" class="hint"></p><details id="measurement-audit" hidden><summary>Measurement coverage &amp; formulas</summary><p id="measurement-scope" class="hint"></p><p class="hint">Availability is not scientific validity. Missing inputs remain null. No direct cognition measure or calibrated AI skill assessment is implemented.</p><ul id="measurement-coverage"></ul><button id="export-audit" class="secondary">Export full measurement audit JSON</button></details><details id="validation-details" hidden><summary>Review validation findings</summary><ul id="validation-findings"></ul></details><p class="hint">JSON preserves the complete archive. CSV contains one row per attempt. Source ratings and participant skill ratings stay separate.</p></footer>
+</main>
+<script type="module" src="trainer.js"></script>
+</body>
+</html>

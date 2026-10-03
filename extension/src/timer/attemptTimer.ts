@@ -50,13 +50,12 @@ export function recoverTimer(startedAtIso: string, timeLimitSeconds: number, now
 
 /**
  * Finalize an early finish (Complete / Abort).
- * Clamps tiny negative clock skew to 0 but never fabricates time:
- * negative elapsed beyond 1s skew throws (data-quality guard).
+ * Rejects negative or nonfinite elapsed time; wall-clock adjustments require review.
  */
 export function finalizeElapsedMs(startedAtMs: number, endedAtMs: number): number {
   const elapsed = endedAtMs - startedAtMs;
-  if (elapsed < -1000) throw new Error('Elapsed time cannot be negative.');
-  return Math.max(0, elapsed);
+  if (!Number.isFinite(elapsed) || elapsed < 0) throw new Error('Elapsed time cannot be negative or non-finite; check the system clock.');
+  return elapsed;
 }
 
 /** Display tick interval (ms). Display only — completion is decided by timestamps. */

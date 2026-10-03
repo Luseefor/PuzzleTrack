@@ -55,6 +55,13 @@ describe('migration v1 -> v2', () => {
     expect(attempt?.manual_problem_id).toBeNull();
     expect(attempt?.chesstempo_import_id).toBeNull();
     expect(attempt?.match_confidence).toBeNull();
+    // v0.3 additions default safely on pre-bridge records.
+    expect(session?.auto_mode).toBe(false);
+    expect(attempt?.capture_origin).toBeNull();
+    expect(attempt?.cross_validation).toBeNull();
+    expect(attempt?.requires_review).toBe(false);
+    expect(store.liveObservations).toEqual({});
+    expect(store.bridgeStatus.connected).toBe(false);
     expect(store.events['a-1']).toHaveLength(2); // raw events intact
     expect(store.lastHeartbeatMs).toBe(123456789);
     expect(store.imports).toEqual({});

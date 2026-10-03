@@ -1,20 +1,32 @@
 {
   "name": "puzzletrack",
-  "version": "0.1.0",
+  "version": "0.6.0",
   "private": true,
-  "description": "PuzzleTrack v0.1 — local-first research data collector for chess endgame timing studies.",
+  "description": "PuzzleTrack \u2014 local-first research collector with provisional search measures and reproducible study plans.",
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "build": "node scripts/build.mjs",
-    "clean": "rm -rf extension/dist"
+    "build:live": "PT_LIVE_BRIDGE=1 npm run build",
+    "clean": "rm -rf extension/dist",
+    "trainer": "npm run build && node scripts/serve-trainer.mjs",
+    "bank:prepare": "node scripts/prepare-endgame-bank.mjs",
+    "review:package": "node scripts/package-review.mjs",
+    "benchmarks:prepare": "node scripts/prepare-tablebase-benchmarks.mjs",
+    "analyze:tablebase": "node extension/dist/analyze-dataset.mjs",
+    "bank:example": "node scripts/install-example-bank.mjs"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.331",
+    "@types/node": "^22.20.5",
     "esbuild": "^0.21.5",
     "typescript": "^5.6.3",
     "vitest": "^2.1.8"
-  }
+  },
+  "dependencies": {
+    "chess.js": "1.4.0"
+  },
+  "license": "UNLICENSED"
 }

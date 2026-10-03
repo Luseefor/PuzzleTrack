@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "Please cite the software version and your separately approved study protocol. This release is a research-instrument pilot, not evidence of measurement validity."
+title: "PuzzleTrack: reproducible endgame search and stopping instrument"
+authors:
+  - name: "PuzzleTrack contributors"
+version: 0.6.0
+type: software
+repository-code: "https://github.com/Luseefor/PuzzleTrack"
+url: "https://github.com/Luseefor/PuzzleTrack"
+abstract: "A local research instrument recording endgame choices, explicit search reports, timing and provenance, with participant-specific frozen difficulty quotas, draft daily access windows and read-only benchmark analysis."
+keywords:
+  - chess
+  - endgames
+  - decision making
+  - reproducibility
+  - research instrument

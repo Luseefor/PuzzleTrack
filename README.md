@@ -1,138 +1,109 @@
-# PuzzleTrack v0.2
+# PuzzleTrack v0.6.0
 
-Local-first Chrome extension (Manifest V3, strict TypeScript) for a university research project studying
-chess endgame problem solving alongside ChessTempo.
+PuzzleTrack is a local research app for chess endgame decision making, search stopping and time conditions. It includes a standalone decision study and a Chrome extension collector for the separate ChessTempo workflow.
 
-PuzzleTrack is a **research data collector**: experimental timing, session tracking, focus/interruption events,
-manual ChessTempo history import with deterministic matching, and structured CSV/JSON export.
-Everything stays local. No cloud, no accounts, no analytics. No scraping — ever.
+**Start here:** [What we have built](docs/PROJECT_OVERVIEW.md) describes implemented features, recorded measures and remaining research gaps. The proposed AI skill assessment and calibrated relative-difficulty model are not implemented.
 
-## What it does
+## Run the local decision study
 
-- Session setup: Participant ID (e.g. `P01`), number of puzzles (default 10), time limit per puzzle
-  (15 / 30 / 45 / 60 minutes).
-- Side panel (preferred) + popup + tab: the same bundle and domain logic everywhere; closing any
-  UI never stops the timer.
-- Study-tab designation: optionally mark the current browser tab as the Study Tab (numeric tab id
-  only — never URL/title/contents). Leaving it records `study_tab_inactive` / `study_tab_active`.
-- Optional Problem ID annotation during or right after an attempt — heavily preferred by matching.
-- Per-puzzle attempt timer: `Start Attempt` begins a timestamp-based countdown + elapsed clock.
-  `Complete Attempt` saves exact elapsed time; reaching zero auto-records a **timeout** (locked);
-  `Abort` (with confirmation) saves elapsed as aborted.
-- Integrity/interruption monitoring: while an attempt is active, records only the *fact* of focus
-  change (`tab_hidden`, `tab_visible`, `window_blur`, `window_focus`, `study_tab_inactive`,
-  `study_tab_active`) plus timestamps. Derives `focus_loss_count`, `total_time_away_ms`,
-  `integrity_flag` ("≥1 interruption", never "cheating"). Overlapping signals collapse into a
-  single away-window — never double-counted.
-- ChessTempo history import: select a **user-downloaded** history CSV → preview (valid/partial/
-  invalid, recognized/missing/unknown columns, duplicate report) → Continue to Matching.
-  Exact/high-confidence single-candidate matches auto-apply; ambiguous and conflicting cases
-  require manual resolution. See `docs/CHESSTEMPO_IMPORT.md`.
-- Dataset view: Experiment / Chess / Derived column groups; filters for participant, session,
-  result, matched/unmatched, integrity flag; import provenance table; JSON backup export/restore.
-- CSV export: one row per attempt with RAW + PROVENANCE + DERIVED (computed at export) columns.
-- Crash recovery + schema migration: v0.1 data migrates safely to v2 on load; active
-  session/attempt persist; browser restart sets `possibly_interrupted` — results are never
-  fabricated and data is never deleted.
-
-## What it does NOT do (boundaries)
-
-- No ChessTempo scraping, DOM reading, private/undocumented APIs, puzzle downloading, or automated requests.
-- No URLs, page titles, page contents, keystrokes, screenshots, clipboard, mouse tracking, or history collection.
-- No network requests, analytics, telemetry, or third-party code.
-- No sleep/caffeine tracking, no ML/statistics, no backend, no login.
-- Focus loss is recorded as an *interruption event*, never as "cheating".
-
-## Installation (unpacked, Chrome)
-
-1. `npm install`
-2. `npm run build` → output in `extension/dist/`
-3. Open `chrome://extensions`, enable **Developer mode**, click **Load unpacked**,
-   select the `extension/dist` folder.
-4. Open PuzzleTrack via the toolbar (popup) or the **Side Panel** button (preferred:
-   stays visible beside ChessTempo during the study).
-
-## Running a session (see `docs/EXPERIMENT_PROTOCOL.md`)
-
-1. Open ChessTempo endgame training in a tab.
-2. Open the PuzzleTrack side panel; designate the ChessTempo tab as Study Tab.
-3. Enter Participant ID, puzzle count, time limit → **Start Session**.
-4. Immediately before each chess problem, click **Start Attempt** (optionally note the Problem ID).
-5. Solve; click **Complete Attempt** (or let it time out / abort if needed).
-6. Click **Next Puzzle** and repeat. After the final puzzle: review **SESSION COMPLETE**.
-7. Download your ChessTempo history CSV, import it via the Dataset page, review matching.
-8. **Export Session CSV** / **Export Full Dataset CSV** / **Export JSON Backup**.
-
-## Timer behavior
-
-`remaining = deadline − Date.now()` with `deadline = started_at + limit`. Display ticks every
-250 ms, but completion/timeout is decided by timestamps, so throttled timers cannot drift.
-A `chrome.alarms` backup fires the timeout even if every UI surface is closed.
-
-## Integrity-event behavior
-
-- Sources: `document.visibilitychange`, `window blur/focus` (UI), `chrome.windows.onFocusChanged`
-  and `chrome.tabs.onActivated/onRemoved` (background; numeric ids only).
-- Each event stores `event_id`, `attempt_id`, ISO `timestamp`, `event_type`
-  (`attempt_started`, `tab_hidden`, `tab_visible`, `window_blur`, `window_focus`,
-  `study_tab_inactive`, `study_tab_active`, `problem_id_set`, `attempt_completed`,
-  `timeout`, `abort`) and optional metadata (e.g. `source`).
-- Away time = union of away-windows, not the sum of raw events. Reproducible from the raw log.
-
-## CSV export
-
-Header (31 columns) — RAW experiment, RAW chess (manual import, exact), PROVENANCE, DERIVED:
-
-```text
-participant_id,session_id,attempt_id,attempt_number,started_at,ended_at,elapsed_ms,elapsed_seconds,time_limit_seconds,timed_out,experimental_result,focus_loss_count,total_time_away_ms,integrity_flag,problem_id,problem_rating,player_rating_before,player_rating_after,chesstempo_result,moves_used,average_moves,rating_change,difficulty_label,chesstempo_attempted_at,chesstempo_time_used_seconds,match_confidence,chesstempo_import_id,chesstempo_source_row,relative_difficulty,timer_difference_seconds,away_time_percentage
+```sh
+npm ci
+npm run bank:example
+npm run trainer
 ```
 
-Booleans are `TRUE`/`FALSE`; nulls are empty cells; values with commas/quotes/newlines are
-RFC-4180 quoted. Derived columns are computed at export from raw values (see
-`docs/DATA_SCHEMA.md` for the RAW vs DERIVED split).
+Open http://localhost:8769 and keep the server running. The server binds only to this computer. No account or paid puzzle-service quota is needed.
 
-## Development
+The current standalone mode is a professor-review pilot: enter a pseudonymous participant ID to receive a frozen ten-puzzle batch, exactly five easy (source rating 400–1399) and five hard (1800–2600), with fifteen minutes per puzzle. Different IDs receive different positions on this server; the same ID reloads its original assignment. Main-study dates/hours are disabled until reviewed. Participants record plausible candidates, their final move and why they stopped searching. Automatic opponent replies follow the source solution; one continuous timer covers each puzzle sequence.
 
-```bash
-npm install
-npm run typecheck   # tsc --noEmit
-npm test            # vitest run (timer/session/integrity/storage/csv/importer/matcher/derived/duplicates/migration/export)
-npm run build       # esbuild -> extension/dist
+For your professor, send the generated [portable review package instructions](docs/PROFESSOR_REVIEW.md) with [review instructions](docs/PROFESSOR_REVIEW.md). It requires Node.js 20+ but no npm install. Create it again with `npm run build`, start the local server, then `npm run review:package`. The generated ZIP stays local for you to email; it contains the public source bank and PROF_REVIEW assignment, not browser participant responses. No GitHub Release is published.
+
+The participant interface shows no puzzle ratings, reference answers, solved score or total question count. Completion feedback is neutral. Reference branching remains observable, so this does not eliminate learning completely.
+
+## Puzzle sources and randomization
+
+- Exactly 10 questions per local session; seeded random puzzle selection and order without replacement.
+- Exact source-rating band quotas, with deterministic selection and per-participant presentation order.
+- One fixed time limit per scheduled session. The professor pilot uses 15 minutes; the unactivated daily draft crosses 15/20 minutes with mixed/hard-only quotas.
+- A prepared local bank supplies archived participant-specific ten-position assignments. Legacy 200-position UTC daily batches remain a separate calibration endpoint, blocked in main-study mode.
+- A frozen 5,000-position CC0 example bank is included under `examples`, with local working copies under git-ignored `data/endgame`, sufficient for 25 daily batches before expansion. Bank preparation validates complete reference sequences and deduplicates solver positions.
+- Participant exposure exclusion checks puzzle IDs and starting-position keys in this browser dataset, including previously aborted/timed-out attempts.
+- The bundled 24-item calibration pool is the fallback when no bank exists and the default extension source. Daily serving is the localhost route; the extension supports daily JSON upload.
+
+See [bank preparation and study operation](docs/LOCAL_ENDGAME_TRAINER.md). A fresh clone includes a frozen public CC0 example bank; `npm run bank:example` installs it without replacing an existing local bank. Review its prefix-sample limitations before participant collection. Larger banks can be prepared from the licensed source. Selected source rows, ratings and exact pool JSON are frozen in each session archive. The current bank is a download-prefix sample, not the full or representative endgame population.
+
+## Research records
+
+Records include attempt and step timings, presentation callbacks, moves in UCI/SAN, before/after FEN, search reports, stop reasons, task outcomes, focus/visibility events, protocol/build metadata, source checksums, randomization plans and exposure exclusions.
+
+**Export participant CSV:** 84 columns, one row per attempt. Nulls are empty cells; booleans are `TRUE`/`FALSE`; nested move/search/integrity logs are JSON cells. First-candidate/final-choice summary fields describe the first participant decision; use the nested logs for all steps.
+
+**Export research backup:** complete schema-3 JSON, including all participants in that browser dataset and exact frozen source pools. Keep it private and export regularly. Separately back up `data/endgame` and the source download to reproduce bank preparation and daily issuance.
+
+**Validate dataset:** checks timing, assignments, source consistency, move-log continuity, per-position time limits, exposure exclusions and missing measures. Passing validation does not validate the study design.
+
+Timing uses saved timestamps and deadlines rather than counting display ticks. Reload preserves the deadline and marks an active attempt possibly interrupted. Standalone collection observes focus/visibility while the page is open; extension collection also uses background alarms and allowed tab/window signals. Browser timestamps are not hardware-calibrated onset measurements.
+
+## Skill and move-quality limitations
+
+Participant skill is currently an optional researcher-entered rating with source/scale and timestamp. There is no AI baseline test or locally inferred Elo. The legacy `relative_difficulty` column subtracts ChessTempo puzzle/player ratings and remains empty for local attempts; incompatible rating scales are not mixed.
+
+The 24-item starter pool includes archived initial tablebase WDL benchmarks for the first participant move. The expanded daily bank does not. A source-reference mismatch alone does not establish a worse move. The extension Dataset page supports a researcher-supplied, first-decision engine benchmark with provenance. Finer and later-step analyses need separate documented benchmarks.
+
+Time is a behavioral measure, not a direct cognition measure. Satisfaction-of-search criteria, skill/difficulty calibration, time conditions and the analysis plan need to be finalized before recruitment. See [project overview](docs/PROJECT_OVERVIEW.md#skill-and-relative-difficulty-proposed-work).
+
+## Chrome extension / ChessTempo collector
+
+```sh
+npm run build
 ```
 
-Architecture: `extension/src/models` (types), `utils` (ids/time/validation), `timer`
-(timestamp math), `integrity` (focus state machine), `storage` (adapter + repository +
-migration), `session` (orchestration), `importer` (CSV parse + ChessTempo normalize),
-`matching` (deterministic scorer + applier), `analysis` (pure derived variables),
-`export` (CSV + JSON backup), `background` (alarms/heartbeat/focus bridge),
-`ui` (popup/side-panel bundle + dataset workstation, vanilla HTML/CSS/TS). Domain logic
-never imports `chrome.*` except via the storage adapter and background bridge, so it can
-later be reused in a dashboard, backend, or Python analysis pipeline.
+Load `extension/dist` as an unpacked extension from `chrome://extensions` with Developer mode enabled. Popup, side panel and Dataset page share the collector logic. The Dataset page imports researcher-downloaded ChessTempo history CSV, previews parsing/duplicates and matches history to timed attempts with provenance. Ambiguous or conflicting matches require review.
 
-## Limitations (v0.2)
+The optional limited ChessTempo metadata bridge is **disabled in default builds**. For the documented local calibration scope:
 
-- Popup/tab-document focus signals only exist while a UI surface is open; when all are
-  closed, only window-level + study-tab transitions from the background are recorded.
-  Use the **side panel** for the most complete signal.
-- Study-tab tracking follows numeric tab ids; if Chrome reuses ids after a restart,
-  re-designate the study tab.
-- Single-machine local storage (`chrome.storage.local`); no sync, no multi-researcher merge.
-- Concurrent UI + background writes are last-write-wins (fine at this event rate).
-- Correctness summaries use a conservative, documented result-string heuristic — verify
-  against your ChessTempo vocabulary before publishing.
-- No edit of completed experimental records (by design); chess-field corrections go
-  through unmatch/re-match, which is provenance-tracked.
-
-## Repository layout
-
-```text
-puzzletrack/
-├── extension/
-│   ├── manifest.json
-│   ├── src/{background,ui,timer,integrity,storage,export,models,utils,importer,matching,analysis}/
-│   ├── tests/
-│   └── dist/            # build output (load unpacked)
-├── docs/{DATA_SCHEMA.md,EXPERIMENT_PROTOCOL.md,CHESSTEMPO_IMPORT.md}
-├── scripts/build.mjs
-└── package.json
+```sh
+npm run build:live
 ```
+
+See [bridge operation](docs/CHESSTEMPO_LIVE_BRIDGE.md), [permission scope](docs/CHESSTEMPO_PERMISSION.md) and [history import](docs/CHESSTEMPO_IMPORT.md). The bridge does not obtain proprietary puzzles or bypass ChessTempo quotas. The local decision study uses licensed open data independently.
+
+## Storage and privacy
+
+Standalone data is stored in browser localStorage for the chosen host/port/profile, separately from Chrome extension storage. `localhost` and `127.0.0.1` are different origins. Clearing browser data removes records; export JSON regularly. One trainer tab owns session control through a Web Lock. Repository transactions serialize normal app mutations.
+
+There is no cloud synchronization, account service, analytics or telemetry. The local server serves the app and prepared daily pools. Preparation downloads licensed source data; starter-pool preparation queried the public tablebase service. Puzzle play makes no external puzzle/tablebase requests. The extension records allowed numeric tab/window signals; focus loss indicates interruption, not cheating.
+
+Restoring JSON in the extension replaces the target profile's store. Use an isolated profile to review standalone backups or add engine benchmarks; keep the originals. There is no automatic standalone-to-extension synchronization.
+
+## Development and documentation
+
+```sh
+npm run typecheck
+npm test
+npm run build
+npm run bank:prepare -- /path/to/licensed-source.csv.zst 5000
+```
+
+Current domain/data verification: 207 tests in 24 files. Browser verification artifacts are synthetic and must not be analyzed as participant observations. See the documented publication verification and measurement limits; generated observations stay local, outside Git.
+
+| Document | Purpose |
+| --- | --- |
+| [Project overview](docs/PROJECT_OVERVIEW.md) | Built features, research interpretation and proposed work |
+| [Local decision study](docs/LOCAL_ENDGAME_TRAINER.md) | Run, prepare sources, collect and replay |
+| [Data schema](docs/DATA_SCHEMA.md) | Raw records, provenance and derived fields |
+| [Research capture](docs/RESEARCH_CAPTURE.md) | Search measures, rating provenance and reproducibility |
+| [Experiment protocol](docs/EXPERIMENT_PROTOCOL.md) | Collection workflow and unresolved protocol decisions |
+| [Pilot validation](docs/PILOT_VALIDATION.md) | Calibration and validation checklist |
+
+Architecture: vanilla HTML/CSS/TypeScript; chess.js for move legality; esbuild for bundles; Vitest for tests. `extension/src/trainer` owns the local decision interface; `research` owns search capture and seeded plans; `session`, `timer`, `integrity` and `storage` own collection; `export` and `validation` own analysis-ready output/checks; `integrations/chessTempo` owns the optional bridge. Bank/daily preparation and localhost serving live in `scripts`.
+
+Measurement definitions, warning interpretation and remaining gaps: [Measurement audit](docs/MEASUREMENT_AUDIT.md). Validation now includes coverage/formulas and a downloadable per-attempt audit JSON.
+
+Daily schedule, access controls, practice-report limitations and archive rules: [Daily study schedule](docs/DAILY_STUDY_SCHEDULE.md). Daily code changes or a ChatGPT scheduled task are unnecessary; the server selects and archives assignments automatically.
+
+Offline benchmark preparation and initial-position outcome analysis: [Tablebase analysis](docs/TABLEBASE_ANALYSIS.md). The local professor package and `examples/professor-review` include archived WDL coverage for its ten positions.
+
+Public repository: https://github.com/Luseefor/PuzzleTrack. CI runs typechecking, tests and production build on Node.js 20/22. See [third-party notices](THIRD_PARTY_NOTICES.md) and [contributing](CONTRIBUTING.md). This is a pilot software release; mentor-reviewed protocol and skill calibration remain prerequisites for participant research claims.
+
+Original code and documentation are [all rights reserved](LICENSE). CC0 puzzle data and dependency licenses are listed separately in [third-party notices](THIRD_PARTY_NOTICES.md).
