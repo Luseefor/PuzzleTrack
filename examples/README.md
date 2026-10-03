@@ -1,6 +1,6 @@
 # Public source examples — no participant responses
 
-`public-endgame-bank.json` is the frozen 5,000-position CC0 Lichess prefix sample prepared for this prototype. It contains only public source rows, provenance and source checksum metadata. Install a local working copy with `npm run bank:example`; existing working data are preserved. No network is required for example-bank installation or puzzle play.
+`public-endgame-bank.json` is the frozen 5,000-position CC0 Lichess prefix sample prepared for this prototype. It contains only public source rows, provenance and source checksum metadata. Install a local working copy with `npm run bank:example`; existing working data are preserved. With the matching disabled draft configuration, this also seeds the exact public PROF_REVIEW fixture (without observations), so its published benchmark hash matches a fresh clone. No network is required for example-bank installation or puzzle play.
 
 `professor-review/pool.json` is the exact unplayed ten-position PROF_REVIEW assignment (5 easy / 5 hard, 15 minutes each), with frozen schedule metadata and legal reference sequences. `professor-review/benchmarks.json` binds to that exact file's SHA-256 and archives all ten initial tablebase probes. It is a public source fixture, not a participant observation or a cognition result.
 
