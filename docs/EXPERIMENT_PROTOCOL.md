@@ -2,8 +2,13 @@
 
 > This protocol is preliminary and configurable. Adjust puzzle counts, time limits, and
 > instructions per ethics approval before running participants.
+>
+> v0.3 adds an **Auto Mode** variant below. It requires a calibration build
+> (`PT_LIVE_BRIDGE=1`) and operates under the written approval recorded in
+> `docs/CHESSTEMPO_PERMISSION.md` — limited scope only. Default production
+> builds run Manual Mode.
 
-## Recommended workflow
+## Recommended workflow (Manual Mode — supported)
 
 1. Participant opens ChessTempo endgame training in a browser tab.
 2. Participant opens the PuzzleTrack **side panel** (stays visible beside ChessTempo;
@@ -27,6 +32,24 @@
 12. Researcher imports the file via the Dataset page, reviews the preview, continues to
     matching, and resolves any ambiguous/conflicting cases manually.
 13. Researcher exports the final dataset (**Session/Full CSV** + **JSON backup**).
+
+## Auto Mode workflow (v0.3 — permission + calibration build required)
+
+1. Open ChessTempo endgame training.
+2. Open the PuzzleTrack side panel.
+3. Select operating mode **Auto** and click **Connect ChessTempo study tab**,
+   then confirm **Use connected tab as Study Tab**.
+4. Select P01, 10 attempts, the single time condition.
+5. Click **Start Research Session ONCE**.
+6. Solve ten endgames normally. PuzzleTrack starts each attempt when a new
+   problem stabilizes, stops it when the visible result appears, and advances
+   automatically. Timeouts stay authoritative; connection loss shows
+   Reconnect / Switch to Manual without touching timer data.
+7. Session completes automatically at the target count — no attempt 11.
+8. Export backup, download official history, import, and review only
+   conflicts/unmatched attempts (live observations show as CONFIRMED where the
+   history agrees).
+9. Export the final research dataset.
 
 ## Researcher notes
 

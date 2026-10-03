@@ -4,6 +4,7 @@ import { Repository } from '../src/storage/repository.js';
 import {
   EVENT_AFTER_END_TOLERANCE_MS,
   classifyTimerAgreement,
+  computeReadiness,
   validateStore,
 } from '../src/validation/pilotValidator.js';
 import {
@@ -16,6 +17,7 @@ import {
 import { recordFocusSignal } from '../src/session/sessionManager.js';
 import { parseChessTempoCsv } from '../src/importer/chesstempoImporter.js';
 import { applyMatch, registerImport } from '../src/matching/applyMatch.js';
+import { DEV_TIME_LIMIT_SECONDS, isSupportedTimeLimit, validateTimeLimit } from '../src/utils/validation.js';
 
 const T0 = Date.parse('2026-09-20T13:02:00.000Z');
 
@@ -225,5 +227,141 @@ describe('pilot validator', () => {
     expect(after).toBe(before);
     expect(store.pilotReview[attempt.attempt_id]?.status).toBe('verified');
     expect(validateStore(store).valid).toBe(true);
+  });
+
+  it('live-captured chess values without a history match are legitimate', () => {
+    const store = cleanStore();
+    const attempt = Object.values(store.attempts)[0];
+    if (!attempt) throw new Error('missing');
+    attempt.problem_id = '81496';
+    attempt.capture_origin = 'live';
+    store.liveObservations[attempt.attempt_id] = {
+      attempt_id: attempt.attempt_id, problemId: '81496', problemRating: null,
+      difficultyLabel: null, mode: null, playerRatingBefore: null, siteResult: 'unknown',
+      timeUsedSeconds: null, movesUsed: null, averageMoves: null, playerRatingAfter: null,
+      ratingChange: null, lateArrival: false, observedAt: new Date(T0).toISOString(),
+    };
+    expect(codes(validateStore(store), 'errors')).not.toContain('chess-without-match');
+  });
+
+  it('cross-validation status without a match or live observation fails', () => {
+    const store = cleanStore();
+    const attempt = Object.values(store.attempts)[0];
+    if (!attempt) throw new Error('missing');
+    attempt.cross_validation = 'confirmed';
+    const report = validateStore(store);
+    expect(codes(report, 'errors')).toContain('cross-validation-without-match');
+    expect(codes(report, 'errors')).toContain('cross-validation-without-live');
+  });
+
+  it('orphan live observation fails', () => {
+    const store = cleanStore();
+    store.liveObservations['ghost'] = {
+      attempt_id: 'ghost', problemId: '1', problemRating: null, difficultyLabel: null,
+      mode: null, playerRatingBefore: null, siteResult: 'unknown', timeUsedSeconds: null,
+      movesUsed: null, averageMoves: null, playerRatingAfter: null, ratingChange: null,
+      lateArrival: false, observedAt: new Date(T0).toISOString(),
+    };
+    expect(codes(validateStore(store), 'errors')).toContain('live-orphan-attempt');
+  });
+});
+
+describe('pilot readiness', () => {
+  it('empty production store is NOT READY with exact reasons', () => {
+    const store = emptyStore();
+    const report = computeReadiness(store, { bridgeBuild: false, diagnostics: null, validation: validateStore(store) });
+    expect(report.ready).toBe(false);
+    const byKey = new Map(report.checks.map((c) => [c.key, c]));
+    expect(byKey.get('bridge-build')?.status).toBe('fail');
+    expect(byKey.get('bridge-connected')?.status).toBe('fail');
+    expect(byKey.get('req-problem-id')?.status).toBe('pending');
+    expect(byKey.get('history')?.status).toBe('pending');
+  });
+
+  it('READY after connected bridge, observed fields, clean validation, confirmed history', () => {
+    const store = emptyStore();
+    const session = createSession(store, 'P01', 1, 900, T0, true);
+    const a = startAttempt(store, session.session_id, T0);
+    a.step_durations_ms = [{ step_number: 1, duration_ms: 1000 }];
+    completeAttempt(store, a.attempt_id, T0 + 60_000);
+    const attempt = store.attempts[a.attempt_id];
+    if (!attempt) throw new Error('missing');
+    attempt.problem_id = '81496';
+    attempt.problem_rating = 702;
+    attempt.player_rating_before = 1507;
+    attempt.chesstempo_result = 'correct';
+    attempt.capture_origin = 'live+history';
+    attempt.cross_validation = 'confirmed';
+    attempt.chesstempo_import_id = 'imp1';
+    attempt.chesstempo_source_row = 1;
+    attempt.match_confidence = 'exact';
+    store.liveObservations[a.attempt_id] = {
+      attempt_id: a.attempt_id, problemId: '81496', problemRating: 702, difficultyLabel: null,
+      mode: null, playerRatingBefore: 1507, siteResult: 'correct', timeUsedSeconds: 43,
+      movesUsed: 12, averageMoves: null, playerRatingAfter: 1513, ratingChange: 6,
+      lateArrival: false, observedAt: new Date(T0).toISOString(),
+    };
+    store.matches[a.attempt_id] = {
+      matchId: 'm1', attemptId: a.attempt_id, chessTempoRowId: 'imp1:row:1', importId: 'imp1',
+      confidence: 'exact', reasons: ['id+time'], timeDeltaMs: 1000,
+      matchedAt: new Date(T0).toISOString(), matchedBy: 'auto', conflictResolved: false,
+    };
+    store.imports['imp1'] = {
+      importId: 'imp1', importedAt: new Date(T0).toISOString(), originalFilename: 'h.csv',
+      fileFingerprint: 'x', totalRows: 1, validRows: 1, partialRows: 0, invalidRows: 0,
+      matchedRows: 1, unmatchedRows: 0, recognizedFields: [], missingFields: [], unknownHeaders: [],
+    };
+    store.bridgeStatus.connected = true;
+    store.bridgeStatus.tabId = 7;
+    store.importRows['imp1'] = [{
+      rowId: 'imp1:row:1', importId: 'imp1', sourceRow: 1, problemId: '81496',
+      attemptedAt: new Date(T0 + 43_000).toISOString(), problemRating: 702,
+      playerRatingBefore: 1507, playerRatingAfter: 1513, result: 'Win', timeUsedSeconds: 43,
+      movesUsed: 12, averageMoves: null, ratingChange: 6, difficultyLabel: null,
+      validity: 'valid', validityNotes: [], raw: {},
+    }];
+    const validation = validateStore(store);
+    expect(validation.valid).toBe(true);
+    const report = computeReadiness(store, {
+      bridgeBuild: true,
+      diagnostics: {
+        connected: true, state: 'PROBLEM_READY', problemId: '81496', problemRating: 702,
+        playerRating: 1507, result: null, foundFields: ['problem-id'], missingFields: [],
+        stepNumber: null, stepTotal: null,
+      },
+      validation,
+    });
+    expect(report.checks.filter((c) => c.required && c.status !== 'pass')).toEqual([]);
+    expect(report.ready).toBe(true);
+  });
+
+  it('conflicts block readiness; desired gaps do not', () => {
+    const store = emptyStore();
+    const session = createSession(store, 'P01', 1, 900, T0, true);
+    const a = startAttempt(store, session.session_id, T0);
+    completeAttempt(store, a.attempt_id, T0 + 60_000);
+    const attempt = store.attempts[a.attempt_id];
+    if (!attempt) throw new Error('missing');
+    attempt.cross_validation = 'conflict';
+    const report = computeReadiness(store, { bridgeBuild: true, diagnostics: null, validation: validateStore(store) });
+    expect(report.ready).toBe(false);
+    expect(report.checks.find((c) => c.key === 'history')?.status).toBe('fail');
+    // Desired-field pendings never block: bridge checks fail here for other reasons,
+    // but desired items themselves are pending, not fail.
+    for (const c of report.checks.filter((c) => !c.required)) {
+      expect(c.status).not.toBe('fail');
+    }
+  });
+});
+
+describe('dev-only time limit', () => {
+  it('120 s is rejected by default, accepted in bridge builds, production limits untouched', () => {
+    expect(DEV_TIME_LIMIT_SECONDS).toBe(120);
+    expect(isSupportedTimeLimit(120, false)).toBe(false);
+    expect(isSupportedTimeLimit(120, true)).toBe(true);
+    expect(isSupportedTimeLimit(900, false)).toBe(true);
+    expect(isSupportedTimeLimit(901, true)).toBe(false);
+    expect(() => validateTimeLimit(120)).toThrow();
+    expect(validateTimeLimit(900)).toBe(900);
   });
 });

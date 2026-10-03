@@ -125,6 +125,83 @@ No scientific conclusions — instrument validation only.
     items you consciously left unmatched or large timer differences you noted.
 14. Export the final merged **CSV** + final **JSON backup** (`p01-final`).
 
+## STAGE B-AUTO — LIVE-BRIDGE VARIANTS (calibration build + approval only)
+
+Run these only with a `PT_LIVE_BRIDGE=1` build under the approval recorded in
+`docs/CHESSTEMPO_PERMISSION.md`. Manual Mode (Stage A/B above) always works and
+is the fallback for every step below.
+
+### TEST01 live run (3 attempts, Auto Mode)
+
+Use Participant `TEST01`, target `3`, Auto Mode, and the **dev-only 2-minute
+limit** only for the timeout drill (never for real participants).
+
+ATTEMPT 1 — automatic lifecycle:
+- Connect the ChessTempo tab; confirm diagnostics show the live problem id.
+- Start the session ONCE. Solve the first problem normally, touching nothing
+  in PuzzleTrack.
+- Verify: attempt auto-started on the new problem (correct problem ID, timer
+  running), auto-completed on the visible result (exact elapsed, site metadata
+  stored, `capture_origin = live`), no duplicate attempts, alarm cleared.
+
+ATTEMPT 2 — interruption under automation:
+- Let the next problem auto-start. Switch away from the study tab ~5 seconds,
+  return, finish the puzzle normally.
+- Verify: one interruption window of ~5 s (no double counting), attempt still
+  auto-completed with the site result, `integrity_flag = true`.
+
+ATTEMPT 3 — timeout drill (dev build only):
+- Start a fresh TEST01 session with the dev-only 2-minute limit. Let the next
+  problem auto-start, then do not solve — wait for `00:00`.
+- Verify: `experimental_result = timeout`, `timed_out = true`, elapsed exactly
+  the limit. Then solve the ChessTempo problem: the late site result must be
+  stored separately (`chesstempo_result = correct`) WITHOUT altering the
+  timeout record.
+
+After TEST01 verify: exactly 3 attempts with unique IDs, correct problem IDs,
+no duplicate auto-starts, correct end states, correct focus telemetry, no
+active attempt remains, session completed, Dataset Validation passes
+(`Errors: 0`), and the readiness view shows which items remain.
+
+### Cross-validation after TEST01
+
+1. Download the official ChessTempo history covering the TEST01 window.
+2. Import it; match against the live observations.
+3. Verify per attempt: problem ID, problem rating, time used (when shown),
+   result, rating change → statuses `CONFIRMED` / `CONFLICT` / empty
+   (unmatched). Missing fields are empty, never conflicts.
+4. Raw live and raw history values must both remain auditable (live
+   observation record + import row + match reasons).
+
+### P01 live pilot (10 puzzles, Auto Mode)
+
+1. Build the approved live-bridge version (`PT_LIVE_BRIDGE=1 npm run build`).
+2. Reload the extension.
+3. Open ChessTempo endgame training.
+4. Open the PuzzleTrack side panel.
+5. Select P01.
+6. Target = 10 puzzles.
+7. Select the professor-approved experimental time condition.
+8. Connect the current ChessTempo tab.
+9. Confirm the adapter shows READY.
+10. Start the session ONCE.
+11. Solve ten endgames normally.
+12. Do NOT manually enter problem metadata unless automation fails.
+13. Do NOT manually press Complete unless Auto Mode fails and fallback is required.
+14. Allow the session to complete automatically at attempt 10.
+15. Export the PuzzleTrack JSON backup.
+16. Export the raw CSV.
+17. Download the official ChessTempo history.
+18. Import the history.
+19. Review conflicts/unmatched attempts.
+20. Run Dataset Validation.
+21. Manually verify all 10 problem IDs.
+22. Export the final merged research CSV.
+
+Do NOT analyze the hypothesis from this pilot. This pilot validates the
+measurement system. Only its success determines readiness for longitudinal
+collection — do not call the instrument ready for full research yet.
+
 ---
 
 ## PILOT CHECKLIST
@@ -166,7 +243,7 @@ No scientific conclusions — instrument validation only.
 
 ### A. Install / update the extension
 
-1. `cd /Users/lucifer/PuzzleTrack && npm install && npm run build`
+1. `cd /path/to/PuzzleTrack && npm ci && npm run build`
 2. Open `chrome://extensions`, enable Developer mode.
 3. If PuzzleTrack is already loaded: click Reload on its card. Otherwise: Load
    unpacked → select `extension/dist`.

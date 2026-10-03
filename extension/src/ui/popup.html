@@ -11,11 +11,14 @@
     <header class="app-header">
       <span class="brand"><span class="brand-mark" aria-hidden="true"></span></span>
       <div class="brand-text">
-        <h1>PuzzleTrack <span class="version">v0.2</span></h1>
+        <h1>PuzzleTrack <span class="version">v0.4.0</span></h1>
         <p class="subtitle">Research timer &amp; session tracker</p>
       </div>
       <span class="status-dot is-idle" id="status-dot" title="Status"></span>
     </header>
+
+    <button id="btn-local-trainer" type="button" class="btn btn-ghost utility-action">Free local endgame puzzles</button>
+    <p id="local-session-note" class="hint" hidden>Local endgame session active. Use the trainer tab to play and record decisions.</p>
 
     <div id="recovery-banner" class="banner banner-warn" hidden>
       <strong>Interrupted attempt detected.</strong>
@@ -46,16 +49,49 @@
         <label><input type="radio" name="limit" value="1800" /><span>30 min</span></label>
         <label><input type="radio" name="limit" value="2700" /><span>45 min</span></label>
         <label><input type="radio" name="limit" value="3600" /><span>60 min</span></label>
+        <label id="limit-dev-wrap" hidden><input type="radio" name="limit" value="120" /><span>2 min (dev test only)</span></label>
       </fieldset>
       <p id="setup-error" class="error" role="alert" hidden></p>
+      <details class="more-actions">
+        <summary>Research protocol and reproducibility</summary>
+        <label class="field"><span>Protocol ID / revision</span><input id="input-protocol" value="provisional-v1" maxlength="100" /></label>
+        <label class="field"><span>Task source</span><input id="input-task-source" value="chesstempo" maxlength="100" /></label>
+        <label class="field"><span>Participant skill rating (optional)</span><input id="input-skill-rating" type="number" min="0" step="any" /></label>
+        <label class="field"><span>Skill rating source / scale</span><input id="input-skill-source" placeholder="e.g. ChessTempo endgame rating" maxlength="100" /></label>
+        <label class="field"><span><input id="input-search-capture" type="checkbox" /> Collect explicit candidate and stop decisions</span></label>
+        <p class="hint">Provisional manual method. Recording choices changes the task. Timing alone is not a cognition score.</p>
+        <label class="field"><span>Reviewed puzzle-reference pool (optional JSON)</span><input id="input-study-pool" type="file" accept=".json,application/json" /></label>
+        <label class="field"><span>Randomization seed</span><input id="input-study-seed" placeholder="e.g. study-v1-P01" maxlength="128" /></label>
+        <div class="row">
+          <label class="field"><span>Minimum puzzles</span><input id="input-count-min" type="number" min="1" max="100" value="5" /></label>
+          <label class="field"><span>Maximum puzzles</span><input id="input-count-max" type="number" min="1" max="100" value="10" /></label>
+        </div>
+        <p class="hint">A pool draws count and order reproducibly. This plan does not control ChessTempo's puzzle selection; follow it manually with an authorized source.</p>
+      </details>
+      <div id="bridge-setup" hidden>
+        <label class="field">
+          <span>Operating mode</span>
+          <select id="input-automation">
+            <option value="manual" selected>Manual — I press Start/Complete</option>
+            <option value="auto">Auto — bridge drives attempts</option>
+          </select>
+        </label>
+        <button id="btn-connect-bridge" type="button" class="btn">Connect ChessTempo study tab</button>
+        <p class="meta" id="bridge-setup-status">Manual mode works without site access. Connect asks for ChessTempo access only when needed.</p>
+        <div id="bridge-diagnostics" hidden>
+          <h3 class="group-title">Bridge diagnostics (calibration only — hidden during sessions)</h3>
+          <dl class="stats">
+            <div><dt>Adapter state</dt><dd id="diag-state">–</dd></div>
+            <div><dt>Problem detected</dt><dd id="diag-problem">–</dd></div>
+            <div><dt>Fields found</dt><dd id="diag-found">–</dd></div>
+            <div><dt>Fields missing</dt><dd id="diag-missing">–</dd></div>
+            <div><dt>Current step</dt><dd id="diag-step">–</dd></div>
+          </dl>
+          <p class="hint">Diagnostic values only — never page text or DOM fragments.</p>
+        </div>
+      </div>
       <button id="btn-start-session" type="button" class="btn btn-primary">Start Session</button>
-      <div class="row">
-        <button id="btn-sidepanel-setup" type="button" class="btn btn-ghost">Open Side Panel</button>
-        <button id="btn-open-tab-setup" type="button" class="btn btn-ghost">Open as tab</button>
-      </div>
-      <div class="row">
-        <button id="btn-dataset-setup" type="button" class="btn btn-ghost">View Dataset</button>
-      </div>
+      <button id="btn-dataset-setup" type="button" class="btn btn-ghost utility-action">Data &amp; exports</button>
       <details class="privacy">
         <summary>Integrity Monitoring</summary>
         <p>During an active puzzle attempt, PuzzleTrack records whether the study tab/window loses focus and how
@@ -69,21 +105,31 @@
       <h2 id="ready-title">Puzzle 1 of 10</h2>
       <p class="meta" id="ready-meta">15:00 per puzzle · Participant P01</p>
       <p class="meta" id="ready-study">Study tab: not designated</p>
-      <div class="row">
-        <button id="btn-designate-tab" type="button" class="btn btn-ghost">Designate current tab as Study Tab</button>
+      <p class="meta" id="ready-assignment" hidden></p>
+      <button id="btn-designate-tab" type="button" class="btn btn-ghost">Designate this tab</button>
+      <div id="bridge-ready" hidden>
+        <div class="connection-card">
+          <span class="connection-indicator" aria-hidden="true"></span>
+          <div class="connection-copy">
+            <strong id="bridge-ready-label">ChessTempo disconnected</strong>
+            <span id="bridge-ready-status" class="meta">Connect this tab to start automatic capture.</span>
+          </div>
+          <button id="btn-connect-ready" type="button" class="btn btn-small btn-connect">Connect</button>
+        </div>
       </div>
-      <label class="field">
-        <span>Problem ID (optional — improves ChessTempo matching)</span>
+      <label id="manual-problem-field" class="field">
+        <span>Problem ID (optional)</span>
         <input id="input-problem-id" type="text" autocomplete="off" placeholder="e.g. 81496" maxlength="64" />
       </label>
+      <p id="ready-auto-note" class="auto-note" hidden>Auto mode starts after ChessTempo exposes a readable problem ID. Per-step timing needs a visible step counter.</p>
       <button id="btn-start-attempt" type="button" class="btn btn-primary">Start Attempt</button>
-      <div class="row">
-        <button id="btn-sidepanel-ready" type="button" class="btn btn-ghost">Side Panel</button>
-        <button id="btn-abandon" type="button" class="btn btn-ghost">Abandon session</button>
-      </div>
-      <div class="row">
-        <button id="btn-dataset-ready" type="button" class="btn btn-ghost">View Dataset</button>
-      </div>
+      <details class="more-actions">
+        <summary>Session options</summary>
+        <div class="row">
+          <button id="btn-abandon" type="button" class="btn btn-ghost btn-danger-ghost">End session</button>
+          <button id="btn-dataset-ready" type="button" class="btn btn-ghost">Data &amp; exports</button>
+        </div>
+      </details>
     </section>
 
     <!-- Active attempt -->
@@ -101,7 +147,39 @@
         <button id="btn-complete" type="button" class="btn btn-primary">Complete Attempt</button>
         <button id="btn-abort" type="button" class="btn btn-danger-ghost">Abort Attempt</button>
       </div>
-      <p class="hint">Keep this window visible. Switching tabs or apps records an interruption (not cheating).</p>
+      <p id="active-auto-note" class="auto-note" hidden>Auto tracking is on. ChessTempo results end the attempt automatically.</p>
+      <div id="bridge-active" hidden>
+        <h3 class="group-title">ChessTempo</h3>
+        <dl class="stats">
+          <div><dt>Problem ID</dt><dd id="bridge-problem">–</dd></div>
+          <div><dt>Problem rating</dt><dd id="bridge-prating">–</dd></div>
+          <div><dt>Player rating</dt><dd id="bridge-qrating">–</dd></div>
+          <div><dt>Step times</dt><dd id="bridge-steps">Waiting</dd></div>
+        </dl>
+      </div>
+      <div id="bridge-lost" class="banner banner-warn" hidden>
+        <strong>ChessTempo connection lost.</strong>
+        <span>Current research timer continues using timestamps. No attempt data was destroyed.</span>
+        <span class="row">
+          <button id="btn-reconnect" type="button" class="btn btn-small">Reconnect</button>
+          <button id="btn-manual-fallback" type="button" class="btn btn-small">Switch to Manual</button>
+        </span>
+      </div>
+      <p id="active-hint" class="hint">Keep this window visible. Switching tabs or apps records an interruption.</p>
+      <fieldset id="research-capture" class="field" hidden>
+        <legend>Search decisions (provisional)</legend>
+        <label class="field"><span>Candidate move / label</span><input id="input-candidate" maxlength="32" autocomplete="off" /></label>
+        <button id="btn-record-candidate" type="button" class="btn">Record candidate now</button>
+        <label class="field"><span>Final choice</span><input id="input-final-choice" maxlength="32" autocomplete="off" /></label>
+        <label class="field"><span>Why are you stopping?</span><select id="input-stop-reason">
+          <option value="" disabled selected>Select a reason</option>
+          <option value="satisfied">Found a satisfactory move</option><option value="time_pressure">Time pressure</option>
+          <option value="exhausted_options">Finished considering options</option><option value="other">Other</option>
+        </select></label>
+        <button id="btn-record-decision" type="button" class="btn btn-primary">Record final choice and end attempt</button>
+        <p id="research-capture-status" class="hint" role="status"></p>
+        <p class="hint">Times are button-press times. This form does not read thoughts or play a chessboard move.</p>
+      </fieldset>
     </section>
 
     <!-- Attempt summary -->
@@ -153,6 +231,7 @@
       <dl class="stats">
         <div><dt>Matched</dt><dd id="done-matched">–</dd></div>
         <div><dt>Unmatched</dt><dd id="done-unmatched">–</dd></div>
+        <div><dt>By confidence</dt><dd id="done-breakdown">–</dd></div>
       </dl>
       <div class="stack">
         <button id="btn-export-session" type="button" class="btn">Export Session CSV</button>

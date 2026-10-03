@@ -1,0 +1,11 @@
+import {readFile,writeFile} from 'node:fs/promises';
+import {parseBackup} from '../extension/src/export/jsonBackup.js';
+import {analyzeTablebase,type TablebaseSidecar} from '../extension/src/research/tablebaseAnalysis.js';
+import {validateStore} from '../extension/src/validation/pilotValidator.js';
+const [backup,sidecar,output]=process.argv.slice(2);
+if(!backup||!sidecar||!output)throw new Error('Usage: npm run analyze:tablebase -- BACKUP.json BENCHMARKS.json NEW-REPORT.json');
+const store=parseBackup(await readFile(backup,'utf8')),validation=validateStore(store);
+if(!validation.valid)throw new Error(`Backup has ${validation.errors.length} structural errors; resolve them before analysis.`);
+const report=await analyzeTablebase(store,JSON.parse(await readFile(sidecar,'utf8')) as TablebaseSidecar);
+await writeFile(output,JSON.stringify({...report,validation},null,2)+'\n',{flag:'wx'});
+console.log(`Report saved: ${output}; ${report.coverage.proxy_available}/${report.coverage.attempts} operational proxies available. Review warnings and protocol; no raw data changed.`);

@@ -1,4 +1,5 @@
 import { SUPPORTED_TIME_LIMITS } from '../models/types.js';
+import { CHESSTEMPO_LIVE_BRIDGE } from '../integrations/featureFlags.js';
 
 export class ValidationError extends Error {
   constructor(message: string) {
@@ -24,8 +25,20 @@ export function validateTargetAttempts(n: number): number {
   return n;
 }
 
+/**
+ * Development-only short timeout (2 minutes) for TEST01 timeout drills.
+ * Available ONLY in live-bridge builds; production conditions (15/30/45/60)
+ * are never altered. Never select this for real participants.
+ */
+export const DEV_TIME_LIMIT_SECONDS = 120;
+
+export function isSupportedTimeLimit(seconds: number, liveBridge = CHESSTEMPO_LIVE_BRIDGE): boolean {
+  if ((SUPPORTED_TIME_LIMITS as readonly number[]).includes(seconds)) return true;
+  return liveBridge && seconds === DEV_TIME_LIMIT_SECONDS;
+}
+
 export function validateTimeLimit(seconds: number): number {
-  if (!(SUPPORTED_TIME_LIMITS as readonly number[]).includes(seconds)) {
+  if (!isSupportedTimeLimit(seconds)) {
     throw new ValidationError(
       `Time limit must be one of: ${SUPPORTED_TIME_LIMITS.join(', ')} seconds.`,
     );

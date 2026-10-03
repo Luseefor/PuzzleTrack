@@ -31,7 +31,11 @@ import { recoverTimer } from '../timer/attemptTimer.js';
 import { formatDurationMs, formatMMSS } from '../utils/time.js';
 import { attemptsToCsv, downloadFilename } from '../export/csv.js';
 import { backupFilename, buildBackup, serializeBackup } from '../export/jsonBackup.js';
+import { CHESSTEMPO_LIVE_BRIDGE } from '../integrations/featureFlags.js';
+import type { AdapterDiagnostics } from '../integrations/chessTempo/chessTempoTypes.js';
 import type { Attempt, PuzzleTrackStore, Session } from '../models/types.js';
+import { parseStudyPool, createStudyPlan } from '../research/studyPlan.js';
+import { recordSearchChoice, summarizeSearch } from '../research/searchCapture.js';
 
 const adapter = new ChromeStorageAdapter();
 const repo = new Repository(adapter);
@@ -118,12 +122,12 @@ async function exportSessionCsv(sessionId: string): Promise<void> {
   const session = store.sessions[sessionId];
   if (!session) return;
   const attempts = Repository.attemptsForSession(store, sessionId);
-  downloadCsv(downloadFilename(`session-${sessionId.slice(0, 8)}`, new Date().toISOString()), attemptsToCsv(participantMap(store), attempts));
+  downloadCsv(downloadFilename(`session-${sessionId.slice(0, 8)}`, new Date().toISOString()), attemptsToCsv(participantMap(store), attempts, store));
 }
 
 async function exportAllCsv(): Promise<void> {
   const store = await load();
-  downloadCsv(downloadFilename('full-dataset', new Date().toISOString()), attemptsToCsv(participantMap(store), Object.values(store.attempts)));
+  downloadCsv(downloadFilename('full-dataset', new Date().toISOString()), attemptsToCsv(participantMap(store), Object.values(store.attempts), store));
 }
 
 function attemptContext(store: PuzzleTrackStore): { session: Session; attempt: Attempt } | null {
@@ -142,8 +146,13 @@ async function maybeTimeoutActive(store: PuzzleTrackStore, nowMs: number): Promi
   if (!ctx || ctx.attempt.ended_at !== null) return false;
   const snap = recoverTimer(ctx.attempt.started_at, ctx.attempt.time_limit_seconds, nowMs);
   if (!snap.timedOut) return false;
-  timeoutAttempt(store, ctx.attempt.attempt_id, nowMs);
-  await save(store);
+  const ended = await repo.transact(current => {
+    const live = current.attempts[ctx.attempt.attempt_id];
+    if (!live || live.ended_at !== null) return false;
+    timeoutAttempt(current, live.attempt_id, nowMs);
+    return true;
+  });
+  if (!ended) return false;
   notifyBackground('clear-timeout', ctx.attempt.attempt_id);
   lastSummaryAttemptId = ctx.attempt.attempt_id;
   return true;
@@ -163,6 +172,14 @@ async function render(): Promise<void> {
   // Session-complete view takes precedence when the last session finished.
   const activeSession = s.activeSessionId ? s.sessions[s.activeSessionId] : undefined;
   const doneSessionId = lastDoneSessionId ?? findJustCompletedSession(s);
+  const localActive = !!activeSession?.study?.local_pool_sha256;
+  $('local-session-note').hidden = !localActive;
+  if (localActive) {
+    for (const id of ['view-setup', 'view-ready', 'view-active', 'view-summary', 'view-done']) $(id).hidden = true;
+    recoveryBanner.hidden = true;
+    timeoutBanner.hidden = true;
+    return;
+  }
 
   if (ctx && ctx.attempt.ended_at === null) {
     // ---- ACTIVE ----
@@ -172,6 +189,9 @@ async function render(): Promise<void> {
     const attempt = converged.attempts[ctx.attempt.attempt_id] as Attempt;
 
     show('view-active');
+    $('research-capture').hidden = !ctx.session.study?.search_capture_enabled;
+    const research = summarizeSearch(s.researchEvents?.[attempt.attempt_id] ?? []);
+    $('research-capture-status').textContent = `${research.candidate_count} candidate(s) recorded${research.first_candidate ? ` · first: ${research.first_candidate}` : ''}`;
     timeoutBanner.hidden = true;
     const interrupted = attempt.possibly_interrupted;
     recoveryBanner.hidden = !interrupted;
@@ -190,6 +210,33 @@ async function render(): Promise<void> {
     $('stat-limit').textContent = formatDurationMs(ctx.session.time_limit_seconds * 1000);
     $('stat-focus').textContent = String(attempt.focus_loss_count);
     $('stat-problem').textContent = attempt.manual_problem_id ?? attempt.problem_id ?? '–';
+    if (CHESSTEMPO_LIVE_BRIDGE && ctx.session.auto_mode) {
+      const b = converged.bridgeStatus;
+      $('bridge-active').hidden = false;
+      $('bridge-problem').textContent = b.problemId ? `#${b.problemId}` : (attempt.problem_id ? `#${attempt.problem_id}` : '–');
+      $('bridge-prating').textContent = '–';
+      if (b.problemRating !== null) $('bridge-prating').textContent = String(b.problemRating);
+      else if (attempt.problem_rating !== null) $('bridge-prating').textContent = String(attempt.problem_rating);
+      $('bridge-qrating').textContent = '–';
+      if (b.playerRating !== null) $('bridge-qrating').textContent = String(b.playerRating);
+      else if (attempt.player_rating_before !== null) $('bridge-qrating').textContent = String(attempt.player_rating_before);
+      const steps = attempt.step_durations_ms ?? [];
+      $('bridge-steps').textContent = steps.length === 0
+        ? 'Waiting for step counter'
+        : steps.map((step) => `${step.step_number}: ${step.duration_ms === null ? 'unavailable' : formatDurationMs(step.duration_ms)}`).join(' · ');
+      $('bridge-lost').hidden = b.connected || !b.error;
+      $('active-auto-note').hidden = false;
+      $('btn-complete').hidden = false;
+      $('btn-abort').hidden = false;
+      $('active-hint').hidden = true;
+    } else {
+      $('bridge-active').hidden = true;
+      $('bridge-lost').hidden = true;
+      $('active-auto-note').hidden = true;
+      $('btn-complete').hidden = false;
+      $('btn-abort').hidden = false;
+      $('active-hint').hidden = false;
+    }
     return;
   }
 
@@ -259,6 +306,17 @@ async function render(): Promise<void> {
     // Matching.
     $('done-matched').textContent = `${chess.matched} / ${total}`;
     $('done-unmatched').textContent = String(chess.unmatched);
+    if (CHESSTEMPO_LIVE_BRIDGE) {
+      const conf: Record<string, number> = {};
+      for (const a of attempts) {
+        const m = s.matches[a.attempt_id];
+        if (m) conf[m.confidence] = (conf[m.confidence] ?? 0) + 1;
+      }
+      const parts = ['exact', 'high', 'medium', 'low']
+        .map((c) => `${c} ${conf[c] ?? 0}`)
+        .join(' · ');
+      $('done-breakdown').textContent = parts;
+    }
     return;
   }
 
@@ -267,14 +325,53 @@ async function render(): Promise<void> {
     show('view-ready');
     const done = Repository.attemptsForSession(s, activeSession.session_id).filter((a) => a.ended_at !== null).length;
     $('ready-title').textContent = `Puzzle ${done + 1} of ${activeSession.target_attempts}`;
+    const assigned = activeSession.study?.plan?.ordered_puzzles[done];
+    $('ready-assignment').hidden = !assigned;
+    $('ready-assignment').textContent = assigned ? `Assigned ${assigned.id} · rating ${assigned.rating} (${assigned.rating_source}). Verify the task before starting.` : '';
     $('ready-meta').textContent = `${formatDurationMs(activeSession.time_limit_seconds * 1000)} per puzzle · Participant ${activeSession.participant_id}`;
     $('ready-study').textContent =
       activeSession.study_tab_id != null ? `Study tab designated (tab #${activeSession.study_tab_id})` : 'Study tab: not designated';
+    $('ready-study').hidden = activeSession.auto_mode;
+    $('btn-designate-tab').hidden = activeSession.auto_mode || activeSession.study_tab_id !== null;
+    $('manual-problem-field').hidden = activeSession.auto_mode;
+    $('btn-start-attempt').hidden = activeSession.auto_mode;
+    $('ready-auto-note').hidden = !activeSession.auto_mode;
+    if (CHESSTEMPO_LIVE_BRIDGE) {
+      $('bridge-ready').hidden = false;
+      const b = s.bridgeStatus;
+      const mode = activeSession.auto_mode ? 'auto' : 'manual';
+      $('bridge-ready-label').textContent = b.connected ? 'ChessTempo connected' : 'ChessTempo disconnected';
+      $('bridge-ready').classList.toggle('is-connected', b.connected);
+      if (!b.connected) {
+        $('bridge-ready-status').textContent = activeSession.auto_mode
+          ? 'Connect this ChessTempo tab to begin.'
+          : 'Connect only when you want to capture ChessTempo details.';
+      } else if (activeSession.auto_mode && !b.problemId) {
+        $('bridge-ready-status').textContent = 'Connected · waiting for a readable problem ID';
+      } else {
+        $('bridge-ready-status').textContent = `${mode === 'auto' ? 'Automatic capture' : 'Manual capture'}${b.problemId ? ` · Problem #${b.problemId}` : ''}`;
+      }
+      $('btn-connect-ready').hidden = false;
+      $('btn-connect-ready').textContent = b.connected ? 'Reconnect' : 'Connect';
+    }
     return;
   }
 
   // ---- SETUP ----
   show('view-setup');
+  if (CHESSTEMPO_LIVE_BRIDGE) {
+    // Dev-only short timeout for TEST01 timeout drills (never for participants).
+    $('limit-dev-wrap').hidden = false;
+    $('bridge-setup').hidden = false;
+    const b = s.bridgeStatus;
+    $('bridge-setup-status').textContent = b.connected
+      ? b.problemId
+        ? `Live bridge: connected to problem #${b.problemId}. Reconnect if this tab stopped updating.`
+        : 'Live bridge: connected. Waiting for a readable problem ID; reconnect after opening a problem.'
+      : b.error ?? 'Live bridge: not connected.';
+    ($('btn-connect-bridge') as HTMLButtonElement).textContent = b.connected ? 'Reconnect ChessTempo tab' : 'Connect ChessTempo tab';
+    void refreshDiagnostics(b.tabId);
+  }
 }
 
 function findJustCompletedSession(store: PuzzleTrackStore): string | null {
@@ -282,6 +379,71 @@ function findJustCompletedSession(store: PuzzleTrackStore): string | null {
   if (completed.length === 0) return null;
   completed.sort((a, b) => (a.completed_at ?? '') < (b.completed_at ?? '') ? 1 : -1);
   return completed[0]?.session_id ?? null;
+}
+
+let lastDiagMs = 0;
+
+/**
+ * Calibration diagnostics (idle setup view only, throttled). Values only —
+ * never page text or DOM fragments. Disabled during sessions by construction:
+ * this view renders only when no session is active.
+ */
+async function refreshDiagnostics(tabId: number | null): Promise<void> {
+  const nowMs = Date.now();
+  if (tabId === null || nowMs - lastDiagMs < 5000) return;
+  lastDiagMs = nowMs;
+  try {
+    const res = (await chrome.runtime.sendMessage({ kind: 'pt-diagnostic-request', tabId })) as {
+      ok: boolean;
+      diagnostics?: AdapterDiagnostics;
+    };
+    if (!res.ok || !res.diagnostics) return;
+    const d = res.diagnostics;
+    $('bridge-diagnostics').hidden = false;
+    $('diag-state').textContent = d.state;
+    $('diag-problem').textContent = d.problemId ? `#${d.problemId}` : 'none';
+    $('diag-found').textContent = d.foundFields.length > 0 ? d.foundFields.join(', ') : 'none';
+    $('diag-missing').textContent = d.missingFields.length > 0 ? d.missingFields.join(', ') : 'none';
+    $('diag-step').textContent = d.stepNumber === null
+      ? 'not detected'
+      : d.stepTotal === null ? String(d.stepNumber) : `${d.stepNumber} of ${d.stepTotal}`;
+  } catch {
+    /* background unreachable: diagnostics stay hidden */
+  }
+}
+
+async function connectCurrentTab(): Promise<boolean> {
+  try {
+    // Ask only when the researcher explicitly connects a ChessTempo tab. This
+    // call must happen before any await so Chrome can associate it with the
+    // user's click gesture.
+    const granted = await chrome.permissions.request({ origins: ['https://chesstempo.com/*'] });
+    if (!granted) {
+      const status = document.getElementById('bridge-setup-status') ?? document.getElementById('bridge-ready-status');
+      if (status) status.textContent = 'ChessTempo access was not granted. Manual mode still works.';
+      return false;
+    }
+    // No "tabs" permission: only the numeric id is read (no URL/title).
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tabId = tabs[0]?.id;
+    if (tabId === undefined) {
+      window.alert('Could not identify the current tab.');
+      return false;
+    }
+    const res = (await chrome.runtime.sendMessage({ kind: 'pt-bridge-connect', tabId })) as {
+      ok: boolean;
+      error?: string;
+    };
+    if (!res.ok) {
+      window.alert(res.error ?? 'Could not connect.');
+      return false;
+    }
+    await render();
+    return true;
+  } catch (e) {
+    window.alert(e instanceof Error ? e.message : 'Could not connect.');
+    return false;
+  }
 }
 
 async function persistFocusSignal(type: 'tab_hidden' | 'tab_visible' | 'window_blur' | 'window_focus'): Promise<void> {
@@ -307,6 +469,28 @@ function wireIntegrityListeners(): void {
 }
 
 function wireButtons(): void {
+  const capture = async (decision: boolean): Promise<void> => {
+    try {
+      let attemptId = '';
+      const atMs = Date.now();
+      await repo.transact(store => {
+        const id = store.activeAttemptId;
+        if (!id) throw new Error('No active attempt.');
+        attemptId = id;
+        const move = ($(decision ? 'input-final-choice' : 'input-candidate') as HTMLInputElement).value;
+        const reason = ($('input-stop-reason') as HTMLSelectElement).value as 'satisfied' | 'time_pressure' | 'exhausted_options' | 'other';
+        recordSearchChoice(store, id, decision ? 'decision' : 'candidate', move, reason, atMs);
+        if (decision) completeAttempt(store, id, atMs);
+      });
+      if (decision) {
+        notifyBackground('clear-timeout', attemptId);
+        lastSummaryAttemptId = attemptId;
+      } else ($('input-candidate') as HTMLInputElement).value = '';
+      await render();
+    } catch (e) { window.alert(e instanceof Error ? e.message : 'Could not record search decision.'); }
+  };
+  $('btn-record-candidate').addEventListener('click', () => void capture(false));
+  $('btn-record-decision').addEventListener('click', () => void capture(true));
   $('btn-start-session').addEventListener('click', () => {
     void (async () => {
       setError('');
@@ -315,11 +499,28 @@ function wireButtons(): void {
         const count = Number(($('input-count') as HTMLInputElement).value);
         const checked = document.querySelector('input[name="limit"]:checked') as HTMLInputElement | null;
         const limit = Number(checked?.value ?? '900');
-        const store = await load();
-        createSession(store, pid, count, limit, Date.now());
-        await save(store);
+        const autoMode =
+          CHESSTEMPO_LIVE_BRIDGE && ($('input-automation') as HTMLSelectElement).value === 'auto';
+        const value = (id: string): string => ($(id) as HTMLInputElement).value.trim();
+        const protocol = value('input-protocol'), source = value('input-task-source');
+        if (!protocol || !source) throw new Error('Enter the protocol revision and task source.');
+        const skillRaw = value('input-skill-rating'), skillSource = value('input-skill-source');
+        const skill = skillRaw === '' ? null : Number(skillRaw);
+        if (skill !== null && (!Number.isFinite(skill) || skill < 0 || !skillSource)) throw new Error('Skill rating needs a valid value and source / scale.');
+        const poolFile = ($('input-study-pool') as HTMLInputElement).files?.[0];
+        if (poolFile && poolFile.size > 4_000_000) throw new Error('Use a reviewed pool under 4 MB.');
+        if (poolFile && autoMode) throw new Error('A planned pool cannot be enforced by ChessTempo Auto mode. Use manual collection with an authorized puzzle source.');
+        const plan = poolFile ? await createStudyPlan(parseStudyPool(await poolFile.text()), value('input-study-seed'), Number(value('input-count-min')), Number(value('input-count-max'))) : null;
+        await repo.transact(store => {
+        if (autoMode && !store.bridgeStatus.connected) throw new Error('Connect this ChessTempo tab before starting Auto mode.');
+        const session = createSession(store, pid, plan?.ordered_puzzles.length ?? count, limit, Date.now(), autoMode);
+        session.protocol_id = protocol;
+        session.study = { protocol_id: protocol, task_source: source, skill_rating: skill, skill_rating_source: skill === null ? null : skillSource, skill_recorded_at: skill === null ? null : new Date().toISOString(), search_capture_enabled: ($('input-search-capture') as HTMLInputElement).checked, plan };
+        if (autoMode) session.study_tab_id = store.bridgeStatus.tabId;
+        });
         lastSummaryAttemptId = null;
         lastDoneSessionId = null;
+        if (autoMode) await chrome.runtime.sendMessage({ kind: 'pt-session-started' });
         await render();
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Could not start session.');
@@ -327,11 +528,41 @@ function wireButtons(): void {
     })();
   });
 
+  if (CHESSTEMPO_LIVE_BRIDGE) {
+    $('btn-connect-bridge').addEventListener('click', () => {
+      void connectCurrentTab();
+    });
+    $('btn-connect-ready').addEventListener('click', () => {
+      void connectCurrentTab();
+    });
+    $('btn-reconnect').addEventListener('click', () => {
+      void connectCurrentTab();
+    });
+    $('btn-manual-fallback').addEventListener('click', () => {
+      void (async () => {
+        const store = await load();
+        const sid = store.activeSessionId;
+        if (!sid) return;
+        const session = store.sessions[sid];
+        if (!session) return;
+        // Safe fallback: automation off, active attempt untouched, timer untouched.
+        session.auto_mode = false;
+        await save(store);
+        try {
+          await chrome.runtime.sendMessage({ kind: 'pt-bridge-disconnect', reason: 'Switched to manual.' });
+        } catch {
+          /* background unreachable */
+        }
+        await render();
+      })();
+    });
+  }
+
   $('btn-start-attempt').addEventListener('click', () => {
     void (async () => {
-      const store = await load();
-      if (!store.activeSessionId) return;
       const nowMs = Date.now();
+      const attempt = await repo.transact(store => {
+      if (!store.activeSessionId) return null;
       const attempt = startAttempt(store, store.activeSessionId, nowMs);
       // Optional problem-ID annotation aids later ChessTempo matching.
       const manualId = ($('input-problem-id') as HTMLInputElement).value.trim();
@@ -343,8 +574,14 @@ function wireButtons(): void {
           console.warn('Could not save problem ID:', e);
         }
       }
-      ($('input-problem-id') as HTMLInputElement).value = '';
-      await save(store);
+      return attempt;
+      });
+      if (!attempt) return;
+      for (const field of ['input-problem-id', 'input-candidate', 'input-final-choice']) {
+        const input = document.getElementById(field) as HTMLInputElement | null;
+        if (input) input.value = '';
+      }
+      ($('input-stop-reason') as HTMLSelectElement).value = '';
       notifyBackground('schedule-timeout', attempt.attempt_id, Date.parse(attempt.started_at) + attempt.time_limit_seconds * 1000);
       lastSummaryAttemptId = null;
       await render();
@@ -357,9 +594,7 @@ function wireButtons(): void {
       const value = ($('input-problem-id-after') as HTMLInputElement).value.trim();
       if (value === '') return;
       try {
-        const store = await load();
-        setManualProblemId(store, lastSummaryAttemptId, value, Date.now());
-        await save(store);
+        await repo.transact(store => setManualProblemId(store, lastSummaryAttemptId!, value, Date.now()));
         await render();
       } catch (e) {
         window.alert(e instanceof Error ? e.message : 'Could not save problem ID.');
@@ -378,10 +613,7 @@ function wireButtons(): void {
           window.alert('Could not identify the current tab.');
           return;
         }
-        const store = await load();
-        if (!store.activeSessionId) return;
-        designateStudyTab(store, store.activeSessionId, tabId);
-        await save(store);
+        await repo.transact(store => { if (store.activeSessionId) designateStudyTab(store, store.activeSessionId, tabId); });
         await render();
       } catch (e) {
         window.alert(e instanceof Error ? e.message : 'Could not designate study tab.');
@@ -391,11 +623,14 @@ function wireButtons(): void {
 
   $('btn-complete').addEventListener('click', () => {
     void (async () => {
-      const store = await load();
-      if (!store.activeAttemptId) return;
-      const id = store.activeAttemptId;
-      completeAttempt(store, id, Date.now());
-      await save(store);
+      const atMs = Date.now();
+      const id = await repo.transact(store => {
+        if (!store.activeAttemptId) return null;
+        const id = store.activeAttemptId;
+        completeAttempt(store, id, atMs);
+        return id;
+      });
+      if (!id) return;
       notifyBackground('clear-timeout', id);
       lastSummaryAttemptId = id;
       await render();
@@ -405,11 +640,14 @@ function wireButtons(): void {
   $('btn-abort').addEventListener('click', () => {
     void (async () => {
       if (!window.confirm('Abort this attempt? Elapsed time will be saved as aborted.')) return;
-      const store = await load();
-      if (!store.activeAttemptId) return;
-      const id = store.activeAttemptId;
-      abortAttempt(store, id, Date.now());
-      await save(store);
+      const atMs = Date.now();
+      const id = await repo.transact(store => {
+        if (!store.activeAttemptId) return null;
+        const id = store.activeAttemptId;
+        abortAttempt(store, id, atMs);
+        return id;
+      });
+      if (!id) return;
       notifyBackground('clear-timeout', id);
       lastSummaryAttemptId = id;
       await render();
@@ -476,6 +714,7 @@ function wireButtons(): void {
     void render();
   });
 
+  $('btn-local-trainer').addEventListener('click', () => { void chrome.tabs.create({url: chrome.runtime.getURL('trainer.html')}); });
   const openDataset = (): void => {
     void chrome.tabs.create({ url: chrome.runtime.getURL('dataset.html') });
   };
@@ -484,22 +723,19 @@ function wireButtons(): void {
     el?.addEventListener('click', openDataset);
   }
   const openSidePanel = (): void => {
-    void (async () => {
-      try {
-        const win = await chrome.windows.getCurrent();
-        if (win.id !== undefined) await chrome.sidePanel.open({ windowId: win.id });
-      } catch {
-        window.alert('Side panel is not available in this Chrome version (requires Chrome 114+).');
-      }
-    })();
+    if (!chrome.sidePanel) {
+      window.alert('Side panel requires Chrome 114 or newer.');
+      return;
+    }
+    // Keep the API call directly inside the click gesture; Chrome requires
+    // recent user activation when opening a side panel programmatically.
+    void chrome.sidePanel.open({ windowId: chrome.windows.WINDOW_ID_CURRENT }).catch((e: unknown) => {
+      window.alert(e instanceof Error ? `Could not open the side panel: ${e.message}` : 'Could not open the side panel.');
+    });
   };
   for (const id of ['btn-sidepanel-setup', 'btn-sidepanel-ready']) {
     document.getElementById(id)?.addEventListener('click', openSidePanel);
   }
-  $('btn-open-tab-setup')?.addEventListener('click', () => {
-    void chrome.tabs.create({ url: chrome.runtime.getURL('popup.html') });
-  });
-
   // Keyboard accessibility: Enter on participant input starts session.
   ($('input-participant') as HTMLInputElement).addEventListener('keydown', (e) => {
     if (e.key === 'Enter') ($('btn-start-session') as HTMLButtonElement).click();

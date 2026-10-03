@@ -30,9 +30,13 @@ function attempt(partial: Partial<Attempt> = {}): Attempt {
     manual_problem_id: null,
     chesstempo_attempted_at: null,
     chesstempo_time_used_seconds: null,
+    step_durations_ms: null,
     chesstempo_import_id: null,
     chesstempo_source_row: null,
     match_confidence: null,
+    capture_origin: null,
+    cross_validation: null,
+    requires_review: false,
     ...partial,
   };
 }
@@ -47,7 +51,9 @@ describe('csv export', () => {
     expect(ATTEMPT_CSV_COLUMNS).toContain('chesstempo_attempted_at');
     expect(ATTEMPT_CSV_COLUMNS).toContain('relative_difficulty');
     expect(ATTEMPT_CSV_COLUMNS).toContain('match_confidence');
-    expect(ATTEMPT_CSV_COLUMNS).toHaveLength(31);
+    expect(ATTEMPT_CSV_COLUMNS).toContain('capture_origin');
+    expect(ATTEMPT_CSV_COLUMNS).toContain('cross_validation');
+    expect(ATTEMPT_CSV_COLUMNS).toHaveLength(84);
   });
 
   it('row count matches attempts + header', () => {

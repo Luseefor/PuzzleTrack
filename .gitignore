@@ -2,8 +2,16 @@ node_modules/
 extension/dist/
 *.log
 .DS_Store
+data/endgame/
 # Local ChessTempo fixtures may contain private participant data — never commit.
 fixtures/local/*.csv
 fixtures/local/*.txt
 fixtures/local/*.json
 !fixtures/local/README.md
+
+# Generated/private research artifacts and local agent notes.
+output/
+progress.md
+.env
+.env.*
+!.env.example

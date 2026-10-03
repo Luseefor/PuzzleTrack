@@ -11,6 +11,7 @@
 import { newUuid } from '../utils/ids.js';
 import { nowIso } from '../utils/time.js';
 import type { ChessTempoAttempt, ChessTempoImport, DuplicateReport } from '../models/chesstempo.js';
+import { parseTimeUsed } from '../integrations/chessTempo/chessTempoParser.js';
 import { parseCsvText } from './csvParse.js';
 
 type LogicalField =
@@ -120,19 +121,32 @@ function parseNumberOrNull(raw: string, notes: string[], label: string): number 
   const t = raw.trim().replace(/,/g, '');
   if (t === '') return null;
   // Tolerate trailing units like "43s" / "1200 pts".
-  const m = t.match(/^[+-]?(\d+(\.\d+)?)/);
+  const m = t.match(/^[+-]?\d+(?:\.\d+)?\s*(?:pts?|points?|moves?)?$/i);
   if (!m) {
     notes.push(`${label} not numeric ("${raw.trim()}") — kept null, raw preserved.`);
     return null;
   }
-  const n = Number(m[1]);
+  const n = Number(m[0].match(/^[+-]?\d+(?:\.\d+)?/)?.[0]);
   return Number.isFinite(n) ? n : null;
 }
 
-function parseDateOrNull(raw: string, notes: string[], label: string): string | null {
+function parseDateOrNull(raw: string, notes: string[], label: string, offsetMinutes?: number): string | null {
   const t = raw.trim();
   if (t === '') return null;
-  const ms = Date.parse(t);
+  let zoned = t;
+  if (!/(?:z|[+-]\d{2}:?\d{2})$/i.test(t)) {
+    if (offsetMinutes === undefined || !Number.isInteger(offsetMinutes) || Math.abs(offsetMinutes) > 840) {
+      notes.push(`${label} has no UTC offset — select its source timezone before matching; raw preserved.`);
+      return null;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(t)) {
+      notes.push(`${label} must be an unambiguous ISO date and time; raw preserved.`); return null;
+    }
+    const sign = offsetMinutes < 0 ? '-' : '+';
+    const magnitude = Math.abs(offsetMinutes);
+    zoned = t.replace(' ', 'T') + sign + String(Math.floor(magnitude / 60)).padStart(2, '0') + ':' + String(magnitude % 60).padStart(2, '0');
+  }
+  const ms = Date.parse(zoned);
   if (Number.isNaN(ms)) {
     notes.push(`${label} not a recognized date ("${t}") — kept null, raw preserved.`);
     return null;
@@ -166,6 +180,7 @@ export function parseChessTempoCsv(
   fileText: string,
   originalFilename: string,
   nowMs: number = Date.now(),
+  options: { timezoneOffsetMinutes?: number } = {},
 ): ImportParseResult {
   const { headers, rows } = parseCsvText(fileText);
   const mapping = mapHeaders(headers);
@@ -197,13 +212,14 @@ export function parseChessTempoCsv(
 
     const problemRaw = at('problemId').trim().replace(/^#/, '');
     const problemId = problemRaw === '' ? null : problemRaw;
-    const attemptedAt = mapping.mapped['attemptedAt'] !== undefined ? parseDateOrNull(at('attemptedAt'), notes, 'Attempt time') : null;
+    const attemptedAt = mapping.mapped['attemptedAt'] !== undefined ? parseDateOrNull(at('attemptedAt'), notes, 'Attempt time', options.timezoneOffsetMinutes) : null;
     const problemRating = parseNumberOrNull(at('problemRating'), notes, 'Problem rating');
     const playerRatingBefore = parseNumberOrNull(at('playerRatingBefore'), notes, 'Player rating');
     const playerRatingAfter = parseNumberOrNull(at('playerRatingAfter'), notes, 'Player rating after');
     const resultRaw = at('result').trim();
     const result = resultRaw === '' ? null : resultRaw;
-    const timeUsedSeconds = parseNumberOrNull(at('timeUsedSeconds'), notes, 'Time used');
+    const timeUsedSeconds = parseTimeUsed(at('timeUsedSeconds'));
+    if (at('timeUsedSeconds').trim() && timeUsedSeconds === null) notes.push('Time used format is ambiguous — null, raw preserved.');
     const movesUsed = parseNumberOrNull(at('movesUsed'), notes, 'Moves used');
     const averageMoves = parseNumberOrNull(at('averageMoves'), notes, 'Average moves');
     const ratingChange = parseNumberOrNull(at('ratingChange'), notes, 'Rating change');
@@ -255,6 +271,8 @@ export function parseChessTempoCsv(
     import: {
       importId,
       importedAt,
+      timezoneOffsetMinutes: options.timezoneOffsetMinutes ?? null,
+      parserVersion: '0.3.1',
       originalFilename,
       fileFingerprint: fingerprint,
       totalRows,

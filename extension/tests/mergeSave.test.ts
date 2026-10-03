@@ -103,6 +103,48 @@ describe('merge-save concurrency', () => {
     expect(merged.attempts[attemptId]?.possibly_interrupted).toBe(true);
     expect(merged.lastHeartbeatMs).toBe(T0 + 9_000);
   });
+
+  it('finished-path merge preserves freshly matched chess fields (regression)', () => {
+    const { store, attemptId } = seedActive();
+    completeAttempt(store, attemptId, T0 + 60_000);
+    // Stale tick copy loaded before the dataset applied a history match.
+    const stale = JSON.parse(JSON.stringify(store)) as PuzzleTrackStore;
+    const fresh = store.attempts[attemptId];
+    if (!fresh) throw new Error('missing');
+    fresh.problem_id = '81496';
+    fresh.problem_rating = 702;
+    fresh.capture_origin = 'history';
+    fresh.match_confidence = 'high';
+    fresh.chesstempo_import_id = 'imp1';
+    fresh.chesstempo_source_row = 3;
+    const merged = mergeStores(stale, store, T0 + 61_000);
+    const out = merged.attempts[attemptId];
+    expect(out?.ended_at).not.toBeNull();
+    expect(out?.problem_id).toBe('81496');
+    expect(out?.capture_origin).toBe('history');
+  });
+
+  it('bridge status is recency-wins, never clobbered by a stale tick', () => {
+    const { store } = seedActive();
+    const stale = JSON.parse(JSON.stringify(store)) as PuzzleTrackStore;
+    store.bridgeStatus = {
+      connected: true, tabId: 42, problemId: '81496', problemRating: 702,
+      playerRating: 1507, lastEvent: 'problem_loaded', error: null,
+      updatedAt: new Date(T0 + 5_000).toISOString(),
+    };
+    const merged = mergeStores(stale, store, T0 + 6_000);
+    expect(merged.bridgeStatus.connected).toBe(true);
+    expect(merged.bridgeStatus.problemId).toBe('81496');
+    // Stale side wins only when genuinely newer.
+    const staleNewer = JSON.parse(JSON.stringify(merged)) as PuzzleTrackStore;
+    staleNewer.bridgeStatus = {
+      connected: false, tabId: null, problemId: null, problemRating: null,
+      playerRating: null, lastEvent: null, error: 'Closed.',
+      updatedAt: new Date(T0 + 9_000).toISOString(),
+    };
+    const merged2 = mergeStores(staleNewer, merged, T0 + 10_000);
+    expect(merged2.bridgeStatus.connected).toBe(false);
+  });
 });
 
 describe('backup round-trip with review metadata', () => {

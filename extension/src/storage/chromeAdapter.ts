@@ -7,6 +7,10 @@ import type { StorageAdapter } from './storageAdapter.js';
 const STORAGE_KEY = 'puzzletrack.v1';
 
 export class ChromeStorageAdapter implements StorageAdapter {
+  async withLock<T>(operation: () => Promise<T>): Promise<T> {
+    if (!globalThis.navigator?.locks) throw new Error('Research storage requires Web Locks; use a supported Chrome version.');
+    return navigator.locks.request('puzzletrack-storage', { mode: 'exclusive' }, operation);
+  }
   async load(): Promise<string | null> {
     const out = await chrome.storage.local.get(STORAGE_KEY);
     const v: unknown = (out as Record<string, unknown>)[STORAGE_KEY];

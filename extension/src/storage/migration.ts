@@ -3,7 +3,7 @@
  * migrates safely into the v0.2 shape. Never resets storage; unknown fields
  * pass through untouched. Pure function — fully unit-tested.
  */
-import { SCHEMA_VERSION, type Attempt, type PuzzleTrackStore, type Session } from '../models/types.js';
+import { SCHEMA_VERSION, emptyBridgeStatus, type Attempt, type PuzzleTrackStore, type Session } from '../models/types.js';
 
 interface V1Attempt extends Record<string, unknown> {
   attempt_id: string;
@@ -19,6 +19,7 @@ function migrateAttemptV1(raw: V1Attempt): Attempt {
     typeof v === 'number' && Number.isFinite(v) ? v : null;
   const strOrNull = (v: unknown): string | null => (typeof v === 'string' ? v : null);
   return {
+    ...raw,
     attempt_id: String(raw['attempt_id']),
     session_id: String(get('session_id') ?? ''),
     attempt_number: typeof get('attempt_number') === 'number' ? (get('attempt_number') as number) : 0,
@@ -46,16 +47,24 @@ function migrateAttemptV1(raw: V1Attempt): Attempt {
     manual_problem_id: strOrNull(get('manual_problem_id')),
     chesstempo_attempted_at: strOrNull(get('chesstempo_attempted_at')),
     chesstempo_time_used_seconds: numOrNull(get('chesstempo_time_used_seconds')),
+    step_durations_ms: Array.isArray(get('step_durations_ms')) ? get('step_durations_ms') as Attempt['step_durations_ms'] : null,
     chesstempo_import_id: strOrNull(get('chesstempo_import_id')),
     chesstempo_source_row:
       typeof get('chesstempo_source_row') === 'number' ? (get('chesstempo_source_row') as number) : null,
     match_confidence: (get('match_confidence') as Attempt['match_confidence']) ?? null,
+    // v0.3 live-bridge provenance. Pre-bridge records predate automation, so a
+    // matched record must have come from history; unmatched records stay null.
+    capture_origin: (get('capture_origin') as Attempt['capture_origin']) ??
+      (get('chesstempo_import_id') != null ? 'history' : null),
+    cross_validation: (get('cross_validation') as Attempt['cross_validation']) ?? null,
+    requires_review: get('requires_review') === true,
   };
 }
 
 function migrateSessionV1(raw: V1Session): Session {
   const get = (k: string): unknown => raw[k];
   return {
+    ...raw,
     session_id: String(raw['session_id']),
     participant_id: String(get('participant_id') ?? ''),
     target_attempts: typeof get('target_attempts') === 'number' ? (get('target_attempts') as number) : 0,
@@ -64,6 +73,10 @@ function migrateSessionV1(raw: V1Session): Session {
     completed_at: (get('completed_at') as string | null) ?? null,
     status: (get('status') as Session['status']) ?? 'active',
     study_tab_id: typeof get('study_tab_id') === 'number' ? (get('study_tab_id') as number) : null,
+    auto_mode: get('auto_mode') === true,
+    collector_version: typeof get('collector_version') === 'string' ? get('collector_version') as string : null,
+    protocol_id: typeof get('protocol_id') === 'string' ? get('protocol_id') as string : null,
+    study: (get('study') as Session['study']) ?? null,
   };
 }
 
@@ -92,6 +105,7 @@ export function migrateStore(parsed: unknown): PuzzleTrackStore {
   for (const [k, v] of Object.entries(sessionsRaw)) sessions[k] = migrateSessionV1(v);
 
   return {
+    ...raw,
     schemaVersion: SCHEMA_VERSION,
     participants: (raw['participants'] ?? {}) as PuzzleTrackStore['participants'],
     sessions,
@@ -105,5 +119,11 @@ export function migrateStore(parsed: unknown): PuzzleTrackStore {
     matches: (raw['matches'] ?? {}) as PuzzleTrackStore['matches'],
     // Pilot review metadata is additive; older stores simply have none.
     pilotReview: (raw['pilotReview'] ?? {}) as PuzzleTrackStore['pilotReview'],
+    // v0.3 live-bridge state is additive; older stores simply have none.
+    liveObservations: (raw['liveObservations'] ?? {}) as PuzzleTrackStore['liveObservations'],
+    bridgeStatus: (raw['bridgeStatus'] ?? emptyBridgeStatus()) as PuzzleTrackStore['bridgeStatus'],
+    localPools: (raw['localPools'] ?? {}) as NonNullable<PuzzleTrackStore['localPools']>,
+    researchEvents: (raw['researchEvents'] ?? {}) as NonNullable<PuzzleTrackStore['researchEvents']>,
+    bridgeReceipts: (raw['bridgeReceipts'] ?? {}) as NonNullable<PuzzleTrackStore['bridgeReceipts']>,
   };
 }

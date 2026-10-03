@@ -87,6 +87,7 @@
       <label style="justify-content:end">Actions
         <span style="display:flex;gap:8px;flex-wrap:wrap">
           <button id="btn-validate" type="button" class="btn btn-small">Validate Dataset</button>
+          <button id="btn-export-participant" type="button" class="btn btn-small">Export Selected Participant CSV</button>
           <button id="btn-export-all" type="button" class="btn btn-small">Export Full CSV</button>
           <button id="btn-export-json" type="button" class="btn btn-small">Export JSON</button>
           <button id="btn-delete-session" type="button" class="btn btn-small">Delete session…</button>
@@ -99,12 +100,16 @@
       <div id="validation-summary"></div>
       <div id="validation-errors"></div>
       <div id="validation-warnings"></div>
+      <h3>Pilot readiness</h3>
+      <p class="meta">Assessed after the TEST01 loop + history import. Pre-session runs show pending items explaining what remains.</p>
+      <div id="readiness-list"></div>
+      <p id="readiness-verdict"></p>
     </section>
     <p id="empty" class="meta" hidden>No attempts recorded yet.</p>
     <div class="wrap">
       <table id="table" aria-label="PuzzleTrack attempts">
         <thead>
-          <tr class="group"><th colspan="8">Experiment</th><th colspan="7">Chess (manual import)</th><th colspan="6">Derived</th></tr>
+          <tr class="group"><th colspan="8">Experiment</th><th colspan="8">Chess (manual import)</th><th colspan="6">Derived</th></tr>
           <tr id="head-row"></tr>
         </thead>
         <tbody id="body-rows"></tbody>
@@ -117,6 +122,9 @@
       <div class="controls">
         <label>History file (CSV)
           <input id="import-file" type="file" accept=".csv,.txt,text/csv,text/plain" />
+        </label>
+        <label>Timezone of offset-free history times (minutes east of UTC)
+          <input id="import-timezone" type="number" min="-840" max="840" step="1" placeholder="UTC: 0; Chicago CDT: -300" />
         </label>
       </div>
       <div id="import-preview" hidden>
@@ -144,12 +152,30 @@
       <h2>Pilot Review</h2>
       <p class="meta">Ground-truth checklist. Review marks are stored separately — they never modify raw observations.</p>
       <div class="wrap"><table aria-label="Pilot review"><thead><tr>
-        <th>Attempt</th><th>Problem</th><th>PT elapsed</th><th>CT time</th><th>Rating</th><th>Player</th><th>Rel. diff</th><th>CT result</th><th>Exp. result</th><th>Losses</th><th>Away</th><th>Match</th><th>Status</th><th>Review</th>
+        <th>Attempt</th><th>Problem</th><th>PT elapsed</th><th>CT time</th><th>Step times</th><th>Rating</th><th>Player</th><th>Rel. diff</th><th>CT result</th><th>Exp. result</th><th>Losses</th><th>Away</th><th>Match</th><th>Status</th><th>Review</th>
       </tr></thead><tbody id="review-body"></tbody></table></div>
     </section>
 
     <section class="section">
       <h2>Backup / Restore</h2>
+      <details>
+        <summary>Search records and post-trial benchmark (provisional)</summary>
+        <p class="meta">Researcher-supplied scores only, after a final choice was recorded. Use solver-perspective centipawns from the same position and engine configuration. No live engine assistance is provided.</p>
+        <div id="search-records"></div>
+        <form id="benchmark-form" class="controls">
+          <label>Finished attempt<select id="benchmark-attempt"></select></label>
+          <label>Engine name<input id="benchmark-engine" required maxlength="100" /></label>
+          <label>Engine version<input id="benchmark-version" required maxlength="100" /></label>
+          <label>Configuration (depth/nodes/MultiPV/etc.)<input id="benchmark-config" required maxlength="1000" /></label>
+          <label>Authorized position reference<input id="benchmark-position" required maxlength="1000" /></label>
+          <label>Chosen move score (cp)<input id="benchmark-chosen" type="number" step="any" required /></label>
+          <label>Best move (same position)<input id="benchmark-best-move" required maxlength="32" /></label>
+          <label>Best move score (cp)<input id="benchmark-best" type="number" step="any" required /></label>
+          <label>Prespecified gap threshold (cp)<input id="benchmark-threshold" type="number" min="0" step="any" required /></label>
+          <button type="submit" class="btn">Save benchmark</button>
+        </form>
+        <p id="benchmark-status" role="status"></p>
+      </details>
       <p class="meta">JSON backup contains participants, sessions, attempts, events, imports, rows, and match metadata.</p>
       <div class="controls">
         <label>Restore from backup (replaces current data)
